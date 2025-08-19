@@ -441,7 +441,7 @@ class PDFViewer(QWidget):
         self.scroll_area.setWidget(self.scroll_content)
         self.layout.addWidget(self.scroll_area)
 
-        self.page_counter_label = QLabel("Page – / –")
+        self.page_counter_label = QLabel("Page — / —")
         self.page_counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.page_counter_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
         self.layout.addWidget(self.page_counter_label)
@@ -479,7 +479,7 @@ class PDFViewer(QWidget):
 
     def open_pdf(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, f"Open PDF - Viewer {self.viewer_id}", "", "PDF Files (*.pdf)"
+            self, "Open Question PDF", "", "PDF Files (*.pdf)"
         )
         if file_path:
             self.load_pdf(file_path)
@@ -518,7 +518,7 @@ class PDFViewer(QWidget):
     def update_page_counter_label(self):
         total = len(self.page_widgets)
         if total == 0:
-            self.page_counter_label.setText("Page – / –")
+            self.page_counter_label.setText("Page — / —")
         else:
             self.page_counter_label.setText(f"Page {self.current_page_index + 1} / {total}")
 
@@ -567,7 +567,7 @@ class DualPDFViewerApp(QMainWindow):
         self.init_ui()
 
     def init_ui(self):
-        self.setWindowTitle("Dual PDF Viewer (Annotations + Individual/Global Rotation)")
+        self.setWindowTitle("StudyAssistant")
         self.setGeometry(100, 100, 1600, 900)
 
         central_widget = QWidget()
