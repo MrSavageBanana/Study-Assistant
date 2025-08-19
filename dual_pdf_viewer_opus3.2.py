@@ -19,7 +19,7 @@ from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseE
 class PDFPage(QGraphicsView):
     """Custom widget for displaying a PDF page with rectangle annotations and rotation"""
 
-    def __init__(self, page, index: int, owner, parent=None):
+    def __init__(self, page, index: int, owner, annotation_color: QColor, parent=None):
         super().__init__(parent)
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
@@ -37,27 +37,25 @@ class PDFPage(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
-        # Annotation settings
-        self.annotation_color = QColor(255, 0, 0, 100)
+        # Annotation settings (color comes from PDFViewer)
+        self.annotation_color = annotation_color
         self.annotation_width = 2
 
         # Initial render
         self.render_page()
 
     def render_page(self):
-        # Re-render the pixmap for the current rotation.
         mat = fitz.Matrix(1, 1).prerotate(self.rotation)
         pix = self.page.get_pixmap(matrix=mat, alpha=False)
         img_data = pix.tobytes("ppm")
         qimg = QImage.fromData(img_data)
         qpixmap = QPixmap.fromImage(qimg)
 
-        # Replace the whole scene to keep things simple (annotations do not persist across rotations)
         self.scene.clear()
         self.pixmap_item = self.scene.addPixmap(qpixmap)
         self.scene.setSceneRect(QRectF(qpixmap.rect()))
         self.setMinimumHeight(qpixmap.height() + 20)
-        self.annotations = []  # clear list since scene was cleared
+        self.annotations = []
 
     def rotate(self, angle):
         self.rotation = (self.rotation + angle) % 360
@@ -70,16 +68,18 @@ class PDFPage(QGraphicsView):
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def mousePressEvent(self, event: QMouseEvent):
-        # Inform the owner which page is active (by click)
         if self.owner:
             self.owner.set_current_page(self.index)
         if self.cursor().shape() == Qt.CursorShape.CrossCursor and event.button() == Qt.MouseButton.LeftButton:
             self.drawing = True
             self.start_point = self.mapToScene(event.pos())
             pen = QPen(self.annotation_color, self.annotation_width)
-            brush = QBrush(QColor(self.annotation_color.red(),
-                                 self.annotation_color.green(),
-                                 self.annotation_color.blue(), 50))
+            brush = QBrush(QColor(
+                self.annotation_color.red(),
+                self.annotation_color.green(),
+                self.annotation_color.blue(),
+                50
+            ))
             self.temp_item = self.scene.addRect(QRectF(self.start_point, self.start_point), pen, brush)
         else:
             item = self.itemAt(event.pos())
@@ -136,12 +136,13 @@ class PDFPage(QGraphicsView):
 class PDFViewer(QWidget):
     """Single PDF viewer widget with rectangle annotation and per-page/global rotation"""
 
-    def __init__(self, viewer_id: str, parent=None):
+    def __init__(self, viewer_id: str, annotation_color: QColor, parent=None):
         super().__init__(parent)
         self.viewer_id = viewer_id
+        self.annotation_color = annotation_color
         self.pdf_document = None
         self.global_rotation = 0
-        self.rotate_all = False  # toggle state
+        self.rotate_all = False
         self.page_widgets = []
         self.current_page_index = 0
 
@@ -150,7 +151,6 @@ class PDFViewer(QWidget):
     def init_ui(self):
         self.layout = QVBoxLayout()
 
-        # Toolbar
         self.toolbar_layout = QHBoxLayout()
 
         self.rect_btn = QPushButton("□")
@@ -170,7 +170,6 @@ class PDFViewer(QWidget):
         self.rotate_right_btn.clicked.connect(lambda: self.rotate_pages(90))
         self.toolbar_layout.addWidget(self.rotate_right_btn)
 
-        # Toggle for rotate all vs individual
         self.toggle_rotate_btn = QPushButton("Rotate Individually")
         self.toggle_rotate_btn.setCheckable(True)
         self.toggle_rotate_btn.setToolTip("Toggle between rotating all pages or just the current page")
@@ -181,7 +180,6 @@ class PDFViewer(QWidget):
         self.layout.addLayout(self.toolbar_layout)
         self.hide_toolbar()
 
-        # Open button
         self.open_btn = QPushButton("Open PDF")
         self.open_btn.clicked.connect(self.open_pdf)
         self.open_btn.setFixedWidth(200)
@@ -189,7 +187,6 @@ class PDFViewer(QWidget):
         self.open_btn.setStyleSheet("font-size: 16px;")
         self.layout.addWidget(self.open_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Scroll area
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_content = QWidget()
@@ -198,13 +195,11 @@ class PDFViewer(QWidget):
         self.scroll_area.setWidget(self.scroll_content)
         self.layout.addWidget(self.scroll_area)
 
-        # Page counter label UNDERNEATH the PDF viewer (small overlay-like indicator)
         self.page_counter_label = QLabel("Page – / –")
         self.page_counter_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.page_counter_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
         self.layout.addWidget(self.page_counter_label)
 
-        # Track scrolling to update current page
         self.scroll_area.verticalScrollBar().valueChanged.connect(self.update_current_page_from_scroll)
 
         self.setLayout(self.layout)
@@ -248,14 +243,9 @@ class PDFViewer(QWidget):
             self.pdf_document = fitz.open(file_path)
             self.global_rotation = 0
             self.current_page_index = 0
-
-            # Hide open button and show toolbar
             self.open_btn.hide()
             self.show_toolbar()
-
-            # Render all pages
             self.display_pages()
-
         except Exception as e:
             print(f"Error loading PDF: {e}")
 
@@ -263,17 +253,15 @@ class PDFViewer(QWidget):
         if not self.pdf_document:
             return
 
-        # Clear current widgets list and layout
         self.page_widgets.clear()
         while self.scroll_layout.count():
             item = self.scroll_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        # Create page widgets
         for page_num in range(len(self.pdf_document)):
             page = self.pdf_document[page_num]
-            pdf_page = PDFPage(page, page_num, owner=self)
+            pdf_page = PDFPage(page, page_num, owner=self, annotation_color=self.annotation_color)
             pdf_page.rotation = self.global_rotation if self.rotate_all else 0
             pdf_page.render_page()
             self.scroll_layout.addWidget(pdf_page)
@@ -286,11 +274,9 @@ class PDFViewer(QWidget):
         if total == 0:
             self.page_counter_label.setText("Page – / –")
         else:
-            # 1-based page number in label
             self.page_counter_label.setText(f"Page {self.current_page_index + 1} / {total}")
 
     def set_current_page(self, index: int):
-        # Clamp and set
         if not self.page_widgets:
             return
         index = max(0, min(index, len(self.page_widgets) - 1))
@@ -301,7 +287,6 @@ class PDFViewer(QWidget):
     def update_current_page_from_scroll(self):
         if not self.page_widgets:
             return
-        # Determine which page center is closest to viewport center
         vbar = self.scroll_area.verticalScrollBar()
         vy = vbar.value()
         viewport_h = self.scroll_area.viewport().height()
@@ -310,7 +295,7 @@ class PDFViewer(QWidget):
         closest_idx = 0
         closest_dist = float('inf')
         for i, w in enumerate(self.page_widgets):
-            top = w.y()  # position relative to scroll_content
+            top = w.y()
             h = w.height()
             center = top + h / 2
             dist = abs(center - viewport_center_y)
@@ -321,14 +306,11 @@ class PDFViewer(QWidget):
 
     def rotate_pages(self, angle: int):
         if self.rotate_all:
-            # Global rotation for all pages
             self.global_rotation = (self.global_rotation + angle) % 360
-            # Preserve current page index visually if possible
             current_idx = self.current_page_index
             self.display_pages()
             self.set_current_page(current_idx)
         else:
-            # Rotate only the current page
             if not self.page_widgets:
                 return
             self.page_widgets[self.current_page_index].rotate(angle)
@@ -348,8 +330,10 @@ class DualPDFViewerApp(QMainWindow):
         layout = QHBoxLayout()
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self.viewer1 = PDFViewer("1")
-        self.viewer2 = PDFViewer("2")
+        # Left viewer = blue
+        self.viewer1 = PDFViewer("1", QColor(0, 0, 255, 150))
+        # Right viewer = orange
+        self.viewer2 = PDFViewer("2", QColor(255, 165, 0, 150))
 
         splitter.addWidget(self.viewer1)
         splitter.addWidget(self.viewer2)
