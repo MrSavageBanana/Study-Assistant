@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Dual PDF Viewer with Rectangle Annotations + Save/Load + Home Screen
+Dual PDF Viewer with Rectangle Annotations + Auto-Save + Home Screen
 Requirements: pip install PyQt6 PyMuPDF Pillow
 
-created with Claude. Account: Milobowler
+created with Claude. Account: Burhan Ra'if Kouri
 """
 
 import sys
 import json
 import os
+import time
 from pathlib import Path
 import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (
@@ -18,12 +19,12 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QMessageBox, QLineEdit, QDialog, QDialogButtonBox,
     QFormLayout, QFrame, QTextEdit
 )
-from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseEvent, QFont
+from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QTimer
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseEvent, QFont, QCloseEvent
 
 class SavePairDialog(QDialog):
     """Dialog for entering pair name when saving"""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, default_name="", default_description=""):
         super().__init__(parent)
         self.setWindowTitle("Save PDF Pair")
         self.setModal(True)
@@ -32,10 +33,12 @@ class SavePairDialog(QDialog):
         layout = QFormLayout()
         
         self.name_edit = QLineEdit()
+        self.name_edit.setText(default_name)
         self.name_edit.setPlaceholderText("Enter a name for this PDF pair...")
         layout.addRow("Pair Name:", self.name_edit)
         
         self.description_edit = QTextEdit()
+        self.description_edit.setPlainText(default_description)
         self.description_edit.setPlaceholderText("Optional description...")
         self.description_edit.setMaximumHeight(60)
         layout.addRow("Description:", self.description_edit)
@@ -55,7 +58,8 @@ class SavePairDialog(QDialog):
 
 class SelectableRect(QGraphicsRectItem):
     """Rectangle that can be selected and shows resize handles like MS Paint"""
-    def __init__(self, rect, pen, brush, parent=None):
+    
+    def __init__(self, rect, pen, brush, page_widget=None, parent=None):
         super().__init__(rect, parent)
         self.setPen(pen)
         self.setBrush(brush)
@@ -63,6 +67,7 @@ class SelectableRect(QGraphicsRectItem):
         self.selected_pen = QPen(pen.color(), pen.width())
         self.selected_pen.setStyle(Qt.PenStyle.DashLine)
         self.is_selected = False
+        self.page_widget = page_widget  # Reference to the page widget for notifications
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, False)
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, False)
         
@@ -73,9 +78,21 @@ class SelectableRect(QGraphicsRectItem):
     def deselect(self):
         self.is_selected = False
         self.setPen(self.original_pen)
+        
+    def setRect(self, rect):
+        super().setRect(rect)
+        if self.page_widget:
+            self.page_widget.emit_annotation_modified()
+        
+    def setPos(self, pos):
+        super().setPos(pos)
+        if self.page_widget:
+            self.page_widget.emit_annotation_modified()
 
 class PDFPage(QGraphicsView):
     """Custom widget for displaying a PDF page with MS Paint-style rectangle annotations"""
+    
+    annotation_modified = pyqtSignal()  # Signal when annotations are modified
 
     def __init__(self, page, index: int, owner, annotation_color: QColor, parent=None):
         super().__init__(parent)
@@ -111,6 +128,10 @@ class PDFPage(QGraphicsView):
         self.handle_size = 6
 
         self.render_page()
+
+    def emit_annotation_modified(self):
+        """Emit signal that annotations were modified"""
+        self.annotation_modified.emit()
 
     def render_page(self):
         mat = fitz.Matrix(1, 1).prerotate(self.rotation)
@@ -149,7 +170,7 @@ class PDFPage(QGraphicsView):
                 50
             ))
             
-            annotation = SelectableRect(rect, pen, brush)
+            annotation = SelectableRect(rect, pen, brush, page_widget=self)
             self.scene.addItem(annotation)
             self.annotations.append(annotation)
 
@@ -293,7 +314,7 @@ class PDFPage(QGraphicsView):
                     self.annotation_color.blue(),
                     50
                 ))
-                self.temp_rect = SelectableRect(QRectF(scene_pos, scene_pos), pen, brush)
+                self.temp_rect = SelectableRect(QRectF(scene_pos, scene_pos), pen, brush, page_widget=self)
                 self.scene.addItem(self.temp_rect)
                 self.setCursor(Qt.CursorShape.CrossCursor)
 
@@ -353,6 +374,7 @@ class PDFPage(QGraphicsView):
                     self.selected_rect.deselect()
                 self.selected_rect = self.temp_rect
                 self.selected_rect.select()
+                self.emit_annotation_modified()  # New annotation created
             else:
                 self.scene.removeItem(self.temp_rect)
             self.temp_rect = None
@@ -399,6 +421,7 @@ class PDFPage(QGraphicsView):
             if self.selected_rect in self.annotations:
                 self.annotations.remove(self.selected_rect)
             self.selected_rect = None
+            self.emit_annotation_modified()  # Annotation deleted
         super().keyPressEvent(event)
 
     def clear_annotations(self):
@@ -406,6 +429,7 @@ class PDFPage(QGraphicsView):
             self.scene.removeItem(ann)
         self.annotations.clear()
         self.selected_rect = None
+        self.emit_annotation_modified()  # Annotations cleared
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -443,6 +467,8 @@ class PDFPage(QGraphicsView):
 
 class PDFViewer(QWidget):
     """Single PDF viewer widget with rectangle annotation and per-page/global rotation"""
+    
+    annotations_changed = pyqtSignal()  # Signal when any annotations change
 
     def __init__(self, viewer_id: str, annotation_color: QColor, parent=None):
         super().__init__(parent)
@@ -462,7 +488,7 @@ class PDFViewer(QWidget):
 
         self.toolbar_layout = QHBoxLayout()
 
-        self.rect_btn = QPushButton("▢")
+        self.rect_btn = QPushButton("□")
         self.rect_btn.setCheckable(True)
         self.rect_btn.clicked.connect(self.toggle_annotation)
         self.toolbar_layout.addWidget(self.rect_btn)
@@ -512,6 +538,10 @@ class PDFViewer(QWidget):
         self.scroll_area.verticalScrollBar().valueChanged.connect(self.update_current_page_from_scroll)
 
         self.setLayout(self.layout)
+
+    def connect_page_signals(self, page_widget):
+        """Connect annotation change signals from a page widget"""
+        page_widget.annotation_modified.connect(self.annotations_changed.emit)
 
     def load_pdf_with_annotations(self, pdf_path, annotations_data):
         """Load PDF and apply saved annotations"""
@@ -593,6 +623,7 @@ class PDFViewer(QWidget):
             pdf_page = PDFPage(page, page_num, owner=self, annotation_color=self.annotation_color)
             pdf_page.rotation = self.global_rotation if self.rotate_all else 0
             pdf_page.render_page()
+            self.connect_page_signals(pdf_page)  # Connect annotation change signals
             self.scroll_layout.addWidget(pdf_page)
             self.page_widgets.append(pdf_page)
 
@@ -793,6 +824,16 @@ class DualPDFViewerApp(QMainWindow):
         super().__init__()
         self.data_file = "pdf_pairs.json"
         self.current_pair_id = None
+        self.current_pair_name = ""
+        self.current_pair_description = ""
+        self.has_unsaved_changes = False
+        self.is_closing = False
+        
+        # Auto-save timer - used for debouncing rapid changes
+        self.autosave_timer = QTimer()
+        self.autosave_timer.setSingleShot(True)
+        self.autosave_timer.timeout.connect(self.perform_autosave)
+        
         self.init_ui()
         
         # Check if we should show home screen or viewer
@@ -851,12 +892,17 @@ class DualPDFViewerApp(QMainWindow):
         toolbar = QHBoxLayout()
         
         self.home_btn = QPushButton("🏠 Home")
-        self.home_btn.clicked.connect(self.show_home_screen)
+        self.home_btn.clicked.connect(self.go_to_home)
         toolbar.addWidget(self.home_btn)
         
         self.save_btn = QPushButton("💾 Save")
-        self.save_btn.clicked.connect(self.save_pair)
+        self.save_btn.clicked.connect(self.manual_save_pair)
         toolbar.addWidget(self.save_btn)
+        
+        # Auto-save status indicator
+        self.autosave_label = QLabel("Auto-save: Ready")
+        self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
+        toolbar.addWidget(self.autosave_label)
         
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -868,10 +914,12 @@ class DualPDFViewerApp(QMainWindow):
         # Left viewer = blue (640px)
         self.viewer1 = PDFViewer("1", QColor(0, 0, 255, 150))
         self.viewer1.setFixedWidth(640)
+        self.viewer1.annotations_changed.connect(self.on_annotations_changed)
         
         # Right viewer = orange (640px)  
         self.viewer2 = PDFViewer("2", QColor(255, 165, 0, 150))
         self.viewer2.setFixedWidth(640)
+        self.viewer2.annotations_changed.connect(self.on_annotations_changed)
         
         # Third pane = empty (320px)
         self.third_pane = QWidget()
@@ -885,8 +933,91 @@ class DualPDFViewerApp(QMainWindow):
         layout.addLayout(pdf_layout)
         self.viewer_widget.setLayout(layout)
 
+    def on_annotations_changed(self):
+        """Called when annotations are modified - triggers auto-save"""
+        if not self.is_closing and self.current_pair_id:
+            self.has_unsaved_changes = True
+            self.autosave_label.setText("Auto-save: Pending...")
+            self.autosave_label.setStyleSheet("color: #ff9800; font-size: 11px; padding: 2px 4px;")
+            
+            # Restart the timer - this debounces rapid changes
+            self.autosave_timer.stop()
+            self.autosave_timer.start(1000)  # Wait 1 second after last change
+
+    def perform_autosave(self):
+        """Perform the actual auto-save operation"""
+        if not self.has_unsaved_changes or not self.current_pair_id:
+            return
+            
+        if not self.viewer1.pdf_path or not self.viewer2.pdf_path:
+            return
+        
+        try:
+            # Load existing data or create new
+            data = {'pairs': {}}
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r') as f:
+                    data = json.load(f)
+            
+            # Collect annotations from both viewers
+            pdf1_annotations = self.viewer1.get_all_annotations_data()
+            pdf2_annotations = self.viewer2.get_all_annotations_data()
+            
+            # Update existing pair data or create new
+            if self.current_pair_id in data['pairs']:
+                pair_data = data['pairs'][self.current_pair_id]
+                pair_data['pdf1_annotations'] = pdf1_annotations
+                pair_data['pdf2_annotations'] = pdf2_annotations
+                pair_data['updated_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                # This shouldn't happen normally, but handle it just in case
+                pair_data = {
+                    'pair_id': self.current_pair_id,
+                    'name': self.current_pair_name or f"Auto-saved Pair {self.current_pair_id}",
+                    'description': self.current_pair_description,
+                    'pdf1_path': self.viewer1.pdf_path,
+                    'pdf2_path': self.viewer2.pdf_path,
+                    'pdf1_annotations': pdf1_annotations,
+                    'pdf2_annotations': pdf2_annotations,
+                    'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'updated_at': time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+                data['pairs'][self.current_pair_id] = pair_data
+            
+            # Write to file
+            with open(self.data_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            self.has_unsaved_changes = False
+            self.autosave_label.setText("Auto-save: ✓ Saved")
+            self.autosave_label.setStyleSheet("color: #4caf50; font-size: 11px; padding: 2px 4px;")
+            
+            # Reset to "Ready" after 3 seconds
+            QTimer.singleShot(3000, self.reset_autosave_label)
+            
+        except Exception as e:
+            print(f"Auto-save error: {e}")
+            self.autosave_label.setText("Auto-save: Error")
+            self.autosave_label.setStyleSheet("color: #f44336; font-size: 11px; padding: 2px 4px;")
+
+    def reset_autosave_label(self):
+        """Reset auto-save label to ready state"""
+        if not self.has_unsaved_changes:
+            self.autosave_label.setText("Auto-save: Ready")
+            self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
+
+    def go_to_home(self):
+        """Navigate to home screen with auto-save"""
+        if self.has_unsaved_changes and self.current_pair_id:
+            self.perform_autosave()
+        self.show_home_screen()
+
     def show_home_screen(self):
         """Show the home screen"""
+        # Auto-save before leaving if needed
+        if self.has_unsaved_changes and self.current_pair_id:
+            self.perform_autosave()
+        
         # Clear the main layout
         while self.main_layout.count():
             item = self.main_layout.takeAt(0)
@@ -935,7 +1066,11 @@ class DualPDFViewerApp(QMainWindow):
             self.viewer1.load_pdf_with_annotations(pdf1_path, pdf1_annotations)
             self.viewer2.load_pdf_with_annotations(pdf2_path, pdf2_annotations)
             
+            # Store current pair info
             self.current_pair_id = pair_data.get('pair_id')
+            self.current_pair_name = pair_data.get('name', '')
+            self.current_pair_description = pair_data.get('description', '')
+            self.has_unsaved_changes = False
             
             name = pair_data.get('name', 'Unknown')
             self.status_bar.showMessage(f"Loaded pair: {name}")
@@ -943,15 +1078,21 @@ class DualPDFViewerApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'Failed to load PDF pair: {e}')
 
-    def save_pair(self):
-        """Save the current PDF pair with annotations"""
+    def manual_save_pair(self):
+        """Manually save the current PDF pair with annotations"""
         # Check if both viewers have PDFs loaded
         if not self.viewer1.pdf_path or not self.viewer2.pdf_path:
             QMessageBox.warning(self, 'Save Error', 'Please load PDFs in both viewers before saving.')
             return
         
-        # Get pair name from user
-        dialog = SavePairDialog(self)
+        # If we have a current pair, just update it
+        if self.current_pair_id:
+            self.perform_autosave()
+            QMessageBox.information(self, 'Save Successful', f'PDF pair "{self.current_pair_name}" has been updated.')
+            return
+        
+        # Get pair name from user for new pair
+        dialog = SavePairDialog(self, self.current_pair_name, self.current_pair_description)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         
@@ -968,9 +1109,12 @@ class DualPDFViewerApp(QMainWindow):
                     data = json.load(f)
             
             # Generate unique pair ID
-            import time
             if not self.current_pair_id:
                 self.current_pair_id = str(int(time.time()))
+            
+            # Store pair info
+            self.current_pair_name = pair_info['name']
+            self.current_pair_description = pair_info['description']
             
             # Collect annotations from both viewers
             pdf1_annotations = self.viewer1.get_all_annotations_data()
@@ -979,8 +1123,8 @@ class DualPDFViewerApp(QMainWindow):
             # Save pair data
             pair_data = {
                 'pair_id': self.current_pair_id,
-                'name': pair_info['name'],
-                'description': pair_info['description'],
+                'name': self.current_pair_name,
+                'description': self.current_pair_description,
                 'pdf1_path': self.viewer1.pdf_path,
                 'pdf2_path': self.viewer2.pdf_path,
                 'pdf1_annotations': pdf1_annotations,
@@ -995,11 +1139,25 @@ class DualPDFViewerApp(QMainWindow):
             with open(self.data_file, 'w') as f:
                 json.dump(data, f, indent=2)
             
-            self.status_bar.showMessage(f"Saved pair: {pair_info['name']}")
-            QMessageBox.information(self, 'Save Successful', f'PDF pair "{pair_info["name"]}" has been saved successfully.')
+            self.has_unsaved_changes = False
+            self.status_bar.showMessage(f"Saved pair: {self.current_pair_name}")
+            QMessageBox.information(self, 'Save Successful', f'PDF pair "{self.current_pair_name}" has been saved successfully.')
             
         except Exception as e:
             QMessageBox.critical(self, 'Save Error', f'Failed to save PDF pair: {e}')
+
+    def closeEvent(self, event: QCloseEvent):
+        """Handle application close event with auto-save"""
+        self.is_closing = True
+        
+        # Perform final auto-save if needed
+        if self.has_unsaved_changes and self.current_pair_id:
+            try:
+                self.perform_autosave()
+            except Exception as e:
+                print(f"Error during final auto-save: {e}")
+        
+        event.accept()
 
 def main():
     app = QApplication(sys.argv)
