@@ -1,22 +1,57 @@
 #!/usr/bin/env python3
 """
-Dual PDF Viewer with Rectangle Annotations + Individual/Global Page Rotation
-+ Page Counter Overlay per Viewer + Paint-style Rectangle Editing
+Dual PDF Viewer with Rectangle Annotations + Save/Load + Home Screen
 Requirements: pip install PyQt6 PyMuPDF Pillow
 
 created with Claude. Account: Milobowler
 """
 
 import sys
+import json
+import os
+from pathlib import Path
 import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFileDialog,
-    QSplitter, QStatusBar, QGraphicsView, QGraphicsScene,
-    QGraphicsRectItem, QScrollArea
+    QLabel, QPushButton, QFileDialog, QScrollArea, QStatusBar, 
+    QGraphicsView, QGraphicsScene, QGraphicsRectItem, QListWidget,
+    QListWidgetItem, QMessageBox, QLineEdit, QDialog, QDialogButtonBox,
+    QFormLayout, QFrame, QTextEdit
 )
-from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseEvent, QCursor
+from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseEvent, QFont
+
+class SavePairDialog(QDialog):
+    """Dialog for entering pair name when saving"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Save PDF Pair")
+        self.setModal(True)
+        self.resize(400, 150)
+        
+        layout = QFormLayout()
+        
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Enter a name for this PDF pair...")
+        layout.addRow("Pair Name:", self.name_edit)
+        
+        self.description_edit = QTextEdit()
+        self.description_edit.setPlaceholderText("Optional description...")
+        self.description_edit.setMaximumHeight(60)
+        layout.addRow("Description:", self.description_edit)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+        
+    def get_data(self):
+        return {
+            'name': self.name_edit.text().strip(),
+            'description': self.description_edit.toPlainText().strip()
+        }
 
 class SelectableRect(QGraphicsRectItem):
     """Rectangle that can be selected and shows resize handles like MS Paint"""
@@ -55,7 +90,7 @@ class PDFPage(QGraphicsView):
         
         # Selection and resize state
         self.selected_rect = None
-        self.resize_mode = None  # None, 'move', 'nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'
+        self.resize_mode = None
         self.last_mouse_pos = None
         
         self.annotations = []
@@ -64,6 +99,8 @@ class PDFPage(QGraphicsView):
         self.index = index
         self.owner = owner
         self.annotation_mode = False
+        self.page_width = 0
+        self.page_height = 0
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -71,8 +108,6 @@ class PDFPage(QGraphicsView):
         # Annotation settings
         self.annotation_color = annotation_color
         self.annotation_width = 2
-
-        # Handle size for resize detection
         self.handle_size = 6
 
         self.render_page()
@@ -84,12 +119,69 @@ class PDFPage(QGraphicsView):
         qimg = QImage.fromData(img_data)
         qpixmap = QPixmap.fromImage(qimg)
 
+        self.page_width = qpixmap.width()
+        self.page_height = qpixmap.height()
+
         self.scene.clear()
         self.pixmap_item = self.scene.addPixmap(qpixmap)
         self.scene.setSceneRect(QRectF(qpixmap.rect()))
         self.setMinimumHeight(qpixmap.height() + 20)
         self.annotations = []
         self.selected_rect = None
+
+    def load_annotations(self, annotation_data):
+        """Load annotations from relative coordinates"""
+        for ann_data in annotation_data:
+            coords = ann_data['coordinates']
+            
+            # Convert relative coordinates to absolute pixel coordinates
+            x = coords['x'] * self.page_width
+            y = coords['y'] * self.page_height
+            width = coords['width'] * self.page_width
+            height = coords['height'] * self.page_height
+            
+            rect = QRectF(x, y, width, height)
+            pen = QPen(self.annotation_color, self.annotation_width)
+            brush = QBrush(QColor(
+                self.annotation_color.red(),
+                self.annotation_color.green(),
+                self.annotation_color.blue(),
+                50
+            ))
+            
+            annotation = SelectableRect(rect, pen, brush)
+            self.scene.addItem(annotation)
+            self.annotations.append(annotation)
+
+    def get_annotations_data(self):
+        """Convert annotations to relative coordinates for saving"""
+        annotations_data = []
+        for annotation in self.annotations:
+            rect = annotation.rect()
+            pos = annotation.pos()
+            
+            # Calculate absolute coordinates
+            abs_x = rect.x() + pos.x()
+            abs_y = rect.y() + pos.y()
+            abs_width = rect.width()
+            abs_height = rect.height()
+            
+            # Convert to relative coordinates
+            rel_x = abs_x / self.page_width if self.page_width > 0 else 0
+            rel_y = abs_y / self.page_height if self.page_height > 0 else 0
+            rel_width = abs_width / self.page_width if self.page_width > 0 else 0
+            rel_height = abs_height / self.page_height if self.page_height > 0 else 0
+            
+            annotations_data.append({
+                'coordinates': {
+                    'x': rel_x,
+                    'y': rel_y,
+                    'width': rel_width,
+                    'height': rel_height
+                }
+            })
+        
+        return annotations_data
 
     def rotate(self, angle):
         self.rotation = (self.rotation + angle) % 360
@@ -110,11 +202,9 @@ class PDFPage(QGraphicsView):
         rect = rect_item.rect()
         h = self.handle_size
         
-        # Convert to scene coordinates
         rect_pos = rect_item.pos()
         adjusted_rect = QRectF(rect.x() + rect_pos.x(), rect.y() + rect_pos.y(), rect.width(), rect.height())
         
-        # Define handle areas
         handles = {
             'nw': QRectF(adjusted_rect.left() - h/2, adjusted_rect.top() - h/2, h, h),
             'n':  QRectF(adjusted_rect.center().x() - h/2, adjusted_rect.top() - h/2, h, h),
@@ -130,7 +220,6 @@ class PDFPage(QGraphicsView):
             if handle_rect.contains(pos):
                 return handle_name
                 
-        # Check if inside rectangle for move
         if adjusted_rect.contains(pos):
             return 'move'
             
@@ -158,7 +247,6 @@ class PDFPage(QGraphicsView):
         scene_pos = self.mapToScene(event.pos())
         self.last_mouse_pos = scene_pos
         
-        # Check if clicking on selected rectangle's handles
         if self.selected_rect:
             handle = self.get_handle_at_pos(self.selected_rect, scene_pos)
             if handle:
@@ -166,7 +254,6 @@ class PDFPage(QGraphicsView):
                 self.setCursor(self.get_cursor_for_handle(handle))
                 return
         
-        # Check if clicking on any rectangle
         clicked_rect = None
         for rect in self.annotations:
             rect_pos = rect.pos()
@@ -177,15 +264,12 @@ class PDFPage(QGraphicsView):
                 break
         
         if clicked_rect:
-            # Select this rectangle
             if self.selected_rect:
                 self.selected_rect.deselect()
             self.selected_rect = clicked_rect
             self.selected_rect.select()
-            # Force repaint to show selection handles
             self.viewport().update()
             
-            # Check if on handle
             handle = self.get_handle_at_pos(self.selected_rect, scene_pos)
             if handle:
                 self.resize_mode = handle
@@ -194,14 +278,11 @@ class PDFPage(QGraphicsView):
                 self.resize_mode = 'move'
                 self.setCursor(Qt.CursorShape.SizeAllCursor)
         else:
-            # Deselect current rectangle
             if self.selected_rect:
                 self.selected_rect.deselect()
                 self.selected_rect = None
-                # Force repaint to hide selection handles
                 self.viewport().update()
             
-            # Start drawing new rectangle if in annotation mode
             if self.annotation_mode and event.button() == Qt.MouseButton.LeftButton:
                 self.drawing = True
                 self.start_point = scene_pos
@@ -221,25 +302,20 @@ class PDFPage(QGraphicsView):
     def mouseMoveEvent(self, event: QMouseEvent):
         scene_pos = self.mapToScene(event.pos())
         
-        # Handle drawing new rectangle
         if self.drawing and self.temp_rect:
             rect = QRectF(self.start_point, scene_pos).normalized()
             self.temp_rect.setRect(rect)
             super().mouseMoveEvent(event)
             return
         
-        # Handle resizing/moving selected rectangle
         if self.selected_rect and self.resize_mode and self.last_mouse_pos:
-            # Force full viewport repaint to avoid artifacts
             self.viewport().update()
             delta = scene_pos - self.last_mouse_pos
             self.resize_rectangle(delta)
             self.last_mouse_pos = scene_pos
-            # Force another repaint after the operation
             self.viewport().update()
             return
         
-        # Update cursor based on what's under mouse
         if self.selected_rect:
             handle = self.get_handle_at_pos(self.selected_rect, scene_pos)
             if handle:
@@ -249,7 +325,6 @@ class PDFPage(QGraphicsView):
             else:
                 self.setCursor(Qt.CursorShape.ArrowCursor)
         else:
-            # Check if over any rectangle
             over_rect = False
             for rect in self.annotations:
                 rect_pos = rect.pos()
@@ -269,13 +344,11 @@ class PDFPage(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        # Finish drawing new rectangle
         if self.drawing and self.temp_rect:
             self.drawing = False
             rect = self.temp_rect.rect()
             if rect.width() > 5 and rect.height() > 5:
                 self.annotations.append(self.temp_rect)
-                # Select the newly created rectangle
                 if self.selected_rect:
                     self.selected_rect.deselect()
                 self.selected_rect = self.temp_rect
@@ -283,14 +356,11 @@ class PDFPage(QGraphicsView):
             else:
                 self.scene.removeItem(self.temp_rect)
             self.temp_rect = None
-            # Force full repaint after drawing
             self.viewport().update()
         
-        # Finish resize/move
         if self.resize_mode:
             self.resize_mode = None
             self.last_mouse_pos = None
-            # Force full repaint after resize/move
             self.viewport().update()
         
         super().mouseReleaseEvent(event)
@@ -304,27 +374,23 @@ class PDFPage(QGraphicsView):
         pos = self.selected_rect.pos()
         
         if self.resize_mode == 'move':
-            # Move the entire rectangle
             new_pos = pos + delta
             self.selected_rect.setPos(new_pos)
         else:
-            # Resize based on handle
             new_rect = QRectF(rect)
             
-            if 'n' in self.resize_mode:  # Top
+            if 'n' in self.resize_mode:
                 new_rect.setTop(rect.top() + delta.y())
-            if 's' in self.resize_mode:  # Bottom
+            if 's' in self.resize_mode:
                 new_rect.setBottom(rect.bottom() + delta.y())
-            if 'w' in self.resize_mode:  # Left
+            if 'w' in self.resize_mode:
                 new_rect.setLeft(rect.left() + delta.x())
-            if 'e' in self.resize_mode:  # Right
+            if 'e' in self.resize_mode:
                 new_rect.setRight(rect.right() + delta.x())
             
-            # Ensure minimum size
             if new_rect.width() > 10 and new_rect.height() > 10:
                 self.selected_rect.setRect(new_rect)
         
-        # Force viewport update to prevent artifacts
         self.viewport().update()
 
     def keyPressEvent(self, event):
@@ -344,34 +410,30 @@ class PDFPage(QGraphicsView):
     def paintEvent(self, event):
         super().paintEvent(event)
         
-        # Draw resize handles for selected rectangle
         if self.selected_rect and self.selected_rect.is_selected:
             painter = QPainter(self.viewport())
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             
-            # Get rectangle in viewport coordinates
             rect = self.selected_rect.rect()
             rect_pos = self.selected_rect.pos()
             scene_rect = QRectF(rect.x() + rect_pos.x(), rect.y() + rect_pos.y(), rect.width(), rect.height())
             viewport_rect = self.mapFromScene(scene_rect).boundingRect()
             
-            # Draw handles
             handle_size = 6
             pen = QPen(QColor(0, 0, 0), 1)
             brush = QBrush(QColor(255, 255, 255))
             painter.setPen(pen)
             painter.setBrush(brush)
             
-            # Corner and side handle positions
             handles = [
-                QPointF(viewport_rect.left(), viewport_rect.top()),      # nw
-                QPointF(viewport_rect.center().x(), viewport_rect.top()), # n
-                QPointF(viewport_rect.right(), viewport_rect.top()),     # ne
-                QPointF(viewport_rect.right(), viewport_rect.center().y()), # e
-                QPointF(viewport_rect.right(), viewport_rect.bottom()),  # se
-                QPointF(viewport_rect.center().x(), viewport_rect.bottom()), # s
-                QPointF(viewport_rect.left(), viewport_rect.bottom()),   # sw
-                QPointF(viewport_rect.left(), viewport_rect.center().y()) # w
+                QPointF(viewport_rect.left(), viewport_rect.top()),
+                QPointF(viewport_rect.center().x(), viewport_rect.top()),
+                QPointF(viewport_rect.right(), viewport_rect.top()),
+                QPointF(viewport_rect.right(), viewport_rect.center().y()),
+                QPointF(viewport_rect.right(), viewport_rect.bottom()),
+                QPointF(viewport_rect.center().x(), viewport_rect.bottom()),
+                QPointF(viewport_rect.left(), viewport_rect.bottom()),
+                QPointF(viewport_rect.left(), viewport_rect.center().y())
             ]
             
             for handle_pos in handles:
@@ -387,6 +449,7 @@ class PDFViewer(QWidget):
         self.viewer_id = viewer_id
         self.annotation_color = annotation_color
         self.pdf_document = None
+        self.pdf_path = None
         self.global_rotation = 0
         self.rotate_all = False
         self.page_widgets = []
@@ -399,7 +462,7 @@ class PDFViewer(QWidget):
 
         self.toolbar_layout = QHBoxLayout()
 
-        self.rect_btn = QPushButton("□")
+        self.rect_btn = QPushButton("▢")
         self.rect_btn.setCheckable(True)
         self.rect_btn.clicked.connect(self.toggle_annotation)
         self.toolbar_layout.addWidget(self.rect_btn)
@@ -450,6 +513,25 @@ class PDFViewer(QWidget):
 
         self.setLayout(self.layout)
 
+    def load_pdf_with_annotations(self, pdf_path, annotations_data):
+        """Load PDF and apply saved annotations"""
+        self.load_pdf(pdf_path)
+        
+        # Apply annotations to each page
+        for page_num, page_annotations in annotations_data.items():
+            page_index = int(page_num)
+            if page_index < len(self.page_widgets):
+                self.page_widgets[page_index].load_annotations(page_annotations)
+
+    def get_all_annotations_data(self):
+        """Get annotations data for all pages"""
+        all_annotations = {}
+        for i, page_widget in enumerate(self.page_widgets):
+            page_annotations = page_widget.get_annotations_data()
+            if page_annotations:  # Only save pages with annotations
+                all_annotations[str(i)] = page_annotations
+        return all_annotations
+
     def toggle_rotate_mode(self):
         self.rotate_all = self.toggle_rotate_btn.isChecked()
         if self.rotate_all:
@@ -479,7 +561,7 @@ class PDFViewer(QWidget):
 
     def open_pdf(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Question PDF", "", "PDF Files (*.pdf)"
+            self, "Open PDF", "", "PDF Files (*.pdf)"
         )
         if file_path:
             self.load_pdf(file_path)
@@ -487,6 +569,7 @@ class PDFViewer(QWidget):
     def load_pdf(self, file_path: str):
         try:
             self.pdf_document = fitz.open(file_path)
+            self.pdf_path = file_path
             self.global_rotation = 0
             self.current_page_index = 0
             self.open_btn.hide()
@@ -561,26 +644,232 @@ class PDFViewer(QWidget):
                 return
             self.page_widgets[self.current_page_index].rotate(angle)
 
+class HomeScreen(QWidget):
+    """Home screen showing saved PDF pairs"""
+    
+    pair_selected = pyqtSignal(dict)  # Signal emitted when a pair is selected
+    new_pair_requested = pyqtSignal()  # Signal emitted when new pair button is clicked
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.data_file = "pdf_pairs.json"
+        self.init_ui()
+        self.load_pairs()
+    
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # Title
+        title = QLabel("StudyAssistant - PDF Pairs")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 24px; font-weight: bold; margin: 20px 0;")
+        layout.addWidget(title)
+        
+        # New pair button
+        new_pair_btn = QPushButton("Create New PDF Pair")
+        new_pair_btn.setFixedHeight(40)
+        new_pair_btn.setStyleSheet("font-size: 14px; background-color: #0078d4; color: white;")
+        new_pair_btn.clicked.connect(self.new_pair_requested.emit)
+        layout.addWidget(new_pair_btn)
+        
+        # Pairs list
+        self.pairs_list = QListWidget()
+        self.pairs_list.itemDoubleClicked.connect(self.on_pair_selected)
+        layout.addWidget(self.pairs_list)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        open_btn = QPushButton("Open Selected")
+        open_btn.clicked.connect(self.open_selected_pair)
+        button_layout.addWidget(open_btn)
+        
+        delete_btn = QPushButton("Delete Selected")
+        delete_btn.clicked.connect(self.delete_selected_pair)
+        delete_btn.setStyleSheet("background-color: #dc3545; color: white;")
+        button_layout.addWidget(delete_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+    
+    def load_pairs(self):
+        """Load PDF pairs from JSON file"""
+        self.pairs_list.clear()
+        
+        if not os.path.exists(self.data_file):
+            return
+            
+        try:
+            with open(self.data_file, 'r') as f:
+                data = json.load(f)
+                
+            for pair_id, pair_data in data.get('pairs', {}).items():
+                # Check if both PDFs still exist
+                pdf1_exists = os.path.exists(pair_data.get('pdf1_path', ''))
+                pdf2_exists = os.path.exists(pair_data.get('pdf2_path', ''))
+                
+                item = QListWidgetItem()
+                name = pair_data.get('name', f'Pair {pair_id}')
+                description = pair_data.get('description', '')
+                
+                # Create display text
+                display_text = name
+                if description:
+                    display_text += f"\n{description}"
+                
+                # Add status indicators
+                if not pdf1_exists or not pdf2_exists:
+                    display_text += "\n⚠️ Some PDF files are missing"
+                    item.setBackground(QColor(255, 200, 200))  # Light red background
+                
+                item.setText(display_text)
+                item.setData(Qt.ItemDataRole.UserRole, pair_data)
+                self.pairs_list.addItem(item)
+                
+        except Exception as e:
+            print(f"Error loading pairs: {e}")
+    
+    def on_pair_selected(self, item):
+        """Handle double-click on pair item"""
+        pair_data = item.data(Qt.ItemDataRole.UserRole)
+        if pair_data:
+            self.pair_selected.emit(pair_data)
+    
+    def open_selected_pair(self):
+        """Open the currently selected pair"""
+        current_item = self.pairs_list.currentItem()
+        if current_item:
+            self.on_pair_selected(current_item)
+    
+    def delete_selected_pair(self):
+        """Delete the selected pair"""
+        current_item = self.pairs_list.currentItem()
+        if not current_item:
+            return
+            
+        pair_data = current_item.data(Qt.ItemDataRole.UserRole)
+        name = pair_data.get('name', 'Unknown')
+        
+        reply = QMessageBox.question(
+            self, 'Delete PDF Pair',
+            f'Are you sure you want to delete "{name}"?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Remove from JSON file
+            try:
+                if os.path.exists(self.data_file):
+                    with open(self.data_file, 'r') as f:
+                        data = json.load(f)
+                    
+                    # Find and remove the pair
+                    pairs = data.get('pairs', {})
+                    pair_id_to_remove = None
+                    for pair_id, stored_pair_data in pairs.items():
+                        if (stored_pair_data.get('name') == pair_data.get('name') and
+                            stored_pair_data.get('pdf1_path') == pair_data.get('pdf1_path') and
+                            stored_pair_data.get('pdf2_path') == pair_data.get('pdf2_path')):
+                            pair_id_to_remove = pair_id
+                            break
+                    
+                    if pair_id_to_remove:
+                        del pairs[pair_id_to_remove]
+                        data['pairs'] = pairs
+                        
+                        with open(self.data_file, 'w') as f:
+                            json.dump(data, f, indent=2)
+                        
+                        self.load_pairs()  # Refresh the list
+                        
+            except Exception as e:
+                QMessageBox.critical(self, 'Error', f'Failed to delete pair: {e}')
+
 class DualPDFViewerApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.data_file = "pdf_pairs.json"
+        self.current_pair_id = None
         self.init_ui()
+        
+        # Check if we should show home screen or viewer
+        if self.has_valid_pairs():
+            self.show_home_screen()
+        else:
+            self.show_pdf_viewer()
+
+    def has_valid_pairs(self):
+        """Check if there are any valid PDF pairs saved"""
+        if not os.path.exists(self.data_file):
+            return False
+            
+        try:
+            with open(self.data_file, 'r') as f:
+                data = json.load(f)
+            
+            pairs = data.get('pairs', {})
+            for pair_data in pairs.values():
+                pdf1_path = pair_data.get('pdf1_path', '')
+                pdf2_path = pair_data.get('pdf2_path', '')
+                if os.path.exists(pdf1_path) and os.path.exists(pdf2_path):
+                    return True
+            return False
+        except:
+            return False
 
     def init_ui(self):
         self.setWindowTitle("StudyAssistant")
         self.setGeometry(100, 100, 1600, 900)
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # Create stacked widget to switch between home screen and viewer
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QVBoxLayout()
+        self.central_widget.setLayout(self.main_layout)
 
-        layout = QHBoxLayout()
-        layout.setSpacing(0)  # Remove spacing between viewers
+        # Home screen
+        self.home_screen = HomeScreen()
+        self.home_screen.pair_selected.connect(self.load_pair)
+        self.home_screen.new_pair_requested.connect(self.show_pdf_viewer)
+
+        # PDF viewer layout
+        self.viewer_widget = QWidget()
+        self.init_pdf_viewer()
+
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Ready")
+
+    def init_pdf_viewer(self):
+        """Initialize the PDF viewer components"""
+        layout = QVBoxLayout()
+        
+        # Top toolbar
+        toolbar = QHBoxLayout()
+        
+        self.home_btn = QPushButton("🏠 Home")
+        self.home_btn.clicked.connect(self.show_home_screen)
+        toolbar.addWidget(self.home_btn)
+        
+        self.save_btn = QPushButton("💾 Save")
+        self.save_btn.clicked.connect(self.save_pair)
+        toolbar.addWidget(self.save_btn)
+        
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+        
+        # PDF viewers
+        pdf_layout = QHBoxLayout()
+        pdf_layout.setSpacing(0)
 
         # Left viewer = blue (640px)
         self.viewer1 = PDFViewer("1", QColor(0, 0, 255, 150))
         self.viewer1.setFixedWidth(640)
         
-        # Right viewer = orange (640px)
+        # Right viewer = orange (640px)  
         self.viewer2 = PDFViewer("2", QColor(255, 165, 0, 150))
         self.viewer2.setFixedWidth(640)
         
@@ -589,15 +878,128 @@ class DualPDFViewerApp(QMainWindow):
         self.third_pane.setFixedWidth(320)
         self.third_pane.setStyleSheet("background-color: #1e1e1e; border-left: 1px solid #171717;")
 
-        layout.addWidget(self.viewer1)
-        layout.addWidget(self.viewer2)
-        layout.addWidget(self.third_pane)
+        pdf_layout.addWidget(self.viewer1)
+        pdf_layout.addWidget(self.viewer2)
+        pdf_layout.addWidget(self.third_pane)
+        
+        layout.addLayout(pdf_layout)
+        self.viewer_widget.setLayout(layout)
 
-        central_widget.setLayout(layout)
+    def show_home_screen(self):
+        """Show the home screen"""
+        # Clear the main layout
+        while self.main_layout.count():
+            item = self.main_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Add home screen
+        self.main_layout.addWidget(self.home_screen)
+        self.home_screen.load_pairs()  # Refresh pairs list
+        self.status_bar.showMessage("Home - Select a PDF pair or create a new one")
 
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
+    def show_pdf_viewer(self):
+        """Show the PDF viewer"""
+        # Clear the main layout
+        while self.main_layout.count():
+            item = self.main_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Add PDF viewer
+        self.main_layout.addWidget(self.viewer_widget)
+        self.status_bar.showMessage("PDF Viewer - Open PDFs to start annotating")
+
+    def load_pair(self, pair_data):
+        """Load a PDF pair with its annotations"""
+        try:
+            pdf1_path = pair_data.get('pdf1_path', '')
+            pdf2_path = pair_data.get('pdf2_path', '')
+            
+            # Check if files exist
+            if not os.path.exists(pdf1_path):
+                QMessageBox.warning(self, 'File Not Found', f'PDF 1 not found: {pdf1_path}')
+                return
+                
+            if not os.path.exists(pdf2_path):
+                QMessageBox.warning(self, 'File Not Found', f'PDF 2 not found: {pdf2_path}')
+                return
+            
+            # Switch to PDF viewer
+            self.show_pdf_viewer()
+            
+            # Load PDFs and annotations
+            pdf1_annotations = pair_data.get('pdf1_annotations', {})
+            pdf2_annotations = pair_data.get('pdf2_annotations', {})
+            
+            self.viewer1.load_pdf_with_annotations(pdf1_path, pdf1_annotations)
+            self.viewer2.load_pdf_with_annotations(pdf2_path, pdf2_annotations)
+            
+            self.current_pair_id = pair_data.get('pair_id')
+            
+            name = pair_data.get('name', 'Unknown')
+            self.status_bar.showMessage(f"Loaded pair: {name}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f'Failed to load PDF pair: {e}')
+
+    def save_pair(self):
+        """Save the current PDF pair with annotations"""
+        # Check if both viewers have PDFs loaded
+        if not self.viewer1.pdf_path or not self.viewer2.pdf_path:
+            QMessageBox.warning(self, 'Save Error', 'Please load PDFs in both viewers before saving.')
+            return
+        
+        # Get pair name from user
+        dialog = SavePairDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        
+        pair_info = dialog.get_data()
+        if not pair_info['name']:
+            QMessageBox.warning(self, 'Save Error', 'Please enter a name for the PDF pair.')
+            return
+        
+        try:
+            # Load existing data or create new
+            data = {'pairs': {}}
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r') as f:
+                    data = json.load(f)
+            
+            # Generate unique pair ID
+            import time
+            if not self.current_pair_id:
+                self.current_pair_id = str(int(time.time()))
+            
+            # Collect annotations from both viewers
+            pdf1_annotations = self.viewer1.get_all_annotations_data()
+            pdf2_annotations = self.viewer2.get_all_annotations_data()
+            
+            # Save pair data
+            pair_data = {
+                'pair_id': self.current_pair_id,
+                'name': pair_info['name'],
+                'description': pair_info['description'],
+                'pdf1_path': self.viewer1.pdf_path,
+                'pdf2_path': self.viewer2.pdf_path,
+                'pdf1_annotations': pdf1_annotations,
+                'pdf2_annotations': pdf2_annotations,
+                'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'updated_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            data['pairs'][self.current_pair_id] = pair_data
+            
+            # Write to file
+            with open(self.data_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            self.status_bar.showMessage(f"Saved pair: {pair_info['name']}")
+            QMessageBox.information(self, 'Save Successful', f'PDF pair "{pair_info["name"]}" has been saved successfully.')
+            
+        except Exception as e:
+            QMessageBox.critical(self, 'Save Error', f'Failed to save PDF pair: {e}')
 
 def main():
     app = QApplication(sys.argv)
