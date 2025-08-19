@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
 Dual PDF Viewer with Rectangle Annotations + Individual/Global Page Rotation
-+ Page Counter Overlay per Viewer
++ Page Counter Overlay per Viewer + Paint-style Rectangle Editing
 Requirements: pip install PyQt6 PyMuPDF Pillow
+
+created with Claude. Account: Milobowler
 """
 
 import sys
@@ -13,35 +15,66 @@ from PyQt6.QtWidgets import (
     QSplitter, QStatusBar, QGraphicsView, QGraphicsScene,
     QGraphicsRectItem, QScrollArea
 )
-from PyQt6.QtCore import Qt, QRectF
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseEvent
+from PyQt6.QtCore import Qt, QRectF, QPointF
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseEvent, QCursor
+
+class SelectableRect(QGraphicsRectItem):
+    """Rectangle that can be selected and shows resize handles like MS Paint"""
+    def __init__(self, rect, pen, brush, parent=None):
+        super().__init__(rect, parent)
+        self.setPen(pen)
+        self.setBrush(brush)
+        self.original_pen = pen
+        self.selected_pen = QPen(pen.color(), pen.width())
+        self.selected_pen.setStyle(Qt.PenStyle.DashLine)
+        self.is_selected = False
+        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, False)
+        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, False)
+        
+    def select(self):
+        self.is_selected = True
+        self.setPen(self.selected_pen)
+        
+    def deselect(self):
+        self.is_selected = False
+        self.setPen(self.original_pen)
 
 class PDFPage(QGraphicsView):
-    """Custom widget for displaying a PDF page with rectangle annotations and rotation"""
+    """Custom widget for displaying a PDF page with MS Paint-style rectangle annotations"""
 
     def __init__(self, page, index: int, owner, annotation_color: QColor, parent=None):
         super().__init__(parent)
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
         self.pixmap_item = None
+        
+        # Drawing state
         self.drawing = False
         self.start_point = None
-        self.temp_item = None
+        self.temp_rect = None
+        
+        # Selection and resize state
+        self.selected_rect = None
+        self.resize_mode = None  # None, 'move', 'nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'
+        self.last_mouse_pos = None
+        
         self.annotations = []
-        self.selected_item = None
-        self.rotation = 0  # individual rotation per page
+        self.rotation = 0
         self.page = page
         self.index = index
-        self.owner = owner  # reference to PDFViewer for callbacks
+        self.owner = owner
+        self.annotation_mode = False
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
-        # Annotation settings (color comes from PDFViewer)
+        # Annotation settings
         self.annotation_color = annotation_color
         self.annotation_width = 2
 
-        # Initial render
+        # Handle size for resize detection
+        self.handle_size = 6
+
         self.render_page()
 
     def render_page(self):
@@ -56,82 +89,295 @@ class PDFPage(QGraphicsView):
         self.scene.setSceneRect(QRectF(qpixmap.rect()))
         self.setMinimumHeight(qpixmap.height() + 20)
         self.annotations = []
+        self.selected_rect = None
 
     def rotate(self, angle):
         self.rotation = (self.rotation + angle) % 360
         self.render_page()
 
     def set_annotation_mode(self, enabled: bool):
+        self.annotation_mode = enabled
         if enabled:
             self.setCursor(Qt.CursorShape.CrossCursor)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
+    def get_handle_at_pos(self, rect_item, pos):
+        """Check if position is over a resize handle of the rectangle"""
+        if not rect_item.is_selected:
+            return None
+            
+        rect = rect_item.rect()
+        h = self.handle_size
+        
+        # Convert to scene coordinates
+        rect_pos = rect_item.pos()
+        adjusted_rect = QRectF(rect.x() + rect_pos.x(), rect.y() + rect_pos.y(), rect.width(), rect.height())
+        
+        # Define handle areas
+        handles = {
+            'nw': QRectF(adjusted_rect.left() - h/2, adjusted_rect.top() - h/2, h, h),
+            'n':  QRectF(adjusted_rect.center().x() - h/2, adjusted_rect.top() - h/2, h, h),
+            'ne': QRectF(adjusted_rect.right() - h/2, adjusted_rect.top() - h/2, h, h),
+            'e':  QRectF(adjusted_rect.right() - h/2, adjusted_rect.center().y() - h/2, h, h),
+            'se': QRectF(adjusted_rect.right() - h/2, adjusted_rect.bottom() - h/2, h, h),
+            's':  QRectF(adjusted_rect.center().x() - h/2, adjusted_rect.bottom() - h/2, h, h),
+            'sw': QRectF(adjusted_rect.left() - h/2, adjusted_rect.bottom() - h/2, h, h),
+            'w':  QRectF(adjusted_rect.left() - h/2, adjusted_rect.center().y() - h/2, h, h),
+        }
+        
+        for handle_name, handle_rect in handles.items():
+            if handle_rect.contains(pos):
+                return handle_name
+                
+        # Check if inside rectangle for move
+        if adjusted_rect.contains(pos):
+            return 'move'
+            
+        return None
+
+    def get_cursor_for_handle(self, handle):
+        """Get cursor for handle type"""
+        cursors = {
+            'nw': Qt.CursorShape.SizeFDiagCursor,
+            'n':  Qt.CursorShape.SizeVerCursor,
+            'ne': Qt.CursorShape.SizeBDiagCursor,
+            'e':  Qt.CursorShape.SizeHorCursor,
+            'se': Qt.CursorShape.SizeFDiagCursor,
+            's':  Qt.CursorShape.SizeVerCursor,
+            'sw': Qt.CursorShape.SizeBDiagCursor,
+            'w':  Qt.CursorShape.SizeHorCursor,
+            'move': Qt.CursorShape.SizeAllCursor
+        }
+        return cursors.get(handle, Qt.CursorShape.ArrowCursor)
+
     def mousePressEvent(self, event: QMouseEvent):
         if self.owner:
             self.owner.set_current_page(self.index)
-        if self.cursor().shape() == Qt.CursorShape.CrossCursor and event.button() == Qt.MouseButton.LeftButton:
-            self.drawing = True
-            self.start_point = self.mapToScene(event.pos())
-            pen = QPen(self.annotation_color, self.annotation_width)
-            brush = QBrush(QColor(
-                self.annotation_color.red(),
-                self.annotation_color.green(),
-                self.annotation_color.blue(),
-                50
-            ))
-            self.temp_item = self.scene.addRect(QRectF(self.start_point, self.start_point), pen, brush)
-        else:
-            item = self.itemAt(event.pos())
-            if item and item != self.pixmap_item:
-                self.select_item(item)
+            
+        scene_pos = self.mapToScene(event.pos())
+        self.last_mouse_pos = scene_pos
+        
+        # Check if clicking on selected rectangle's handles
+        if self.selected_rect:
+            handle = self.get_handle_at_pos(self.selected_rect, scene_pos)
+            if handle:
+                self.resize_mode = handle
+                self.setCursor(self.get_cursor_for_handle(handle))
+                return
+        
+        # Check if clicking on any rectangle
+        clicked_rect = None
+        for rect in self.annotations:
+            rect_pos = rect.pos()
+            adjusted_rect = QRectF(rect.rect().x() + rect_pos.x(), rect.rect().y() + rect_pos.y(), 
+                                 rect.rect().width(), rect.rect().height())
+            if adjusted_rect.contains(scene_pos):
+                clicked_rect = rect
+                break
+        
+        if clicked_rect:
+            # Select this rectangle
+            if self.selected_rect:
+                self.selected_rect.deselect()
+            self.selected_rect = clicked_rect
+            self.selected_rect.select()
+            # Force repaint to show selection handles
+            self.viewport().update()
+            
+            # Check if on handle
+            handle = self.get_handle_at_pos(self.selected_rect, scene_pos)
+            if handle:
+                self.resize_mode = handle
+                self.setCursor(self.get_cursor_for_handle(handle))
             else:
-                self.deselect_item()
-            super().mousePressEvent(event)
+                self.resize_mode = 'move'
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
+        else:
+            # Deselect current rectangle
+            if self.selected_rect:
+                self.selected_rect.deselect()
+                self.selected_rect = None
+                # Force repaint to hide selection handles
+                self.viewport().update()
+            
+            # Start drawing new rectangle if in annotation mode
+            if self.annotation_mode and event.button() == Qt.MouseButton.LeftButton:
+                self.drawing = True
+                self.start_point = scene_pos
+                pen = QPen(self.annotation_color, self.annotation_width)
+                brush = QBrush(QColor(
+                    self.annotation_color.red(),
+                    self.annotation_color.green(),
+                    self.annotation_color.blue(),
+                    50
+                ))
+                self.temp_rect = SelectableRect(QRectF(scene_pos, scene_pos), pen, brush)
+                self.scene.addItem(self.temp_rect)
+                self.setCursor(Qt.CursorShape.CrossCursor)
+
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if self.drawing and self.temp_item:
-            current_point = self.mapToScene(event.pos())
-            rect = QRectF(self.start_point, current_point).normalized()
-            self.temp_item.setRect(rect)
+        scene_pos = self.mapToScene(event.pos())
+        
+        # Handle drawing new rectangle
+        if self.drawing and self.temp_rect:
+            rect = QRectF(self.start_point, scene_pos).normalized()
+            self.temp_rect.setRect(rect)
+            super().mouseMoveEvent(event)
+            return
+        
+        # Handle resizing/moving selected rectangle
+        if self.selected_rect and self.resize_mode and self.last_mouse_pos:
+            # Force full viewport repaint to avoid artifacts
+            self.viewport().update()
+            delta = scene_pos - self.last_mouse_pos
+            self.resize_rectangle(delta)
+            self.last_mouse_pos = scene_pos
+            # Force another repaint after the operation
+            self.viewport().update()
+            return
+        
+        # Update cursor based on what's under mouse
+        if self.selected_rect:
+            handle = self.get_handle_at_pos(self.selected_rect, scene_pos)
+            if handle:
+                self.setCursor(self.get_cursor_for_handle(handle))
+            elif self.annotation_mode:
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            # Check if over any rectangle
+            over_rect = False
+            for rect in self.annotations:
+                rect_pos = rect.pos()
+                adjusted_rect = QRectF(rect.rect().x() + rect_pos.x(), rect.rect().y() + rect_pos.y(), 
+                                     rect.rect().width(), rect.rect().height())
+                if adjusted_rect.contains(scene_pos):
+                    over_rect = True
+                    break
+            
+            if over_rect:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            elif self.annotation_mode:
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+                
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        if self.drawing and self.temp_item:
+        # Finish drawing new rectangle
+        if self.drawing and self.temp_rect:
             self.drawing = False
-            self.annotations.append(self.temp_item)
-            self.temp_item.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, True)
-            self.temp_item.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, True)
-            self.temp_item = None
+            rect = self.temp_rect.rect()
+            if rect.width() > 5 and rect.height() > 5:
+                self.annotations.append(self.temp_rect)
+                # Select the newly created rectangle
+                if self.selected_rect:
+                    self.selected_rect.deselect()
+                self.selected_rect = self.temp_rect
+                self.selected_rect.select()
+            else:
+                self.scene.removeItem(self.temp_rect)
+            self.temp_rect = None
+            # Force full repaint after drawing
+            self.viewport().update()
+        
+        # Finish resize/move
+        if self.resize_mode:
+            self.resize_mode = None
+            self.last_mouse_pos = None
+            # Force full repaint after resize/move
+            self.viewport().update()
+        
         super().mouseReleaseEvent(event)
 
-    def select_item(self, item):
-        self.deselect_item()
-        self.selected_item = item
-        if hasattr(item, 'setPen'):
-            pen = item.pen()
-            pen.setStyle(Qt.PenStyle.DashLine)
-            item.setPen(pen)
-
-    def deselect_item(self):
-        if self.selected_item and hasattr(self.selected_item, 'setPen'):
-            pen = self.selected_item.pen()
-            pen.setStyle(Qt.PenStyle.SolidLine)
-            self.selected_item.setPen(pen)
-        self.selected_item = None
+    def resize_rectangle(self, delta):
+        """Resize rectangle based on current resize mode"""
+        if not self.selected_rect or not self.resize_mode:
+            return
+            
+        rect = self.selected_rect.rect()
+        pos = self.selected_rect.pos()
+        
+        if self.resize_mode == 'move':
+            # Move the entire rectangle
+            new_pos = pos + delta
+            self.selected_rect.setPos(new_pos)
+        else:
+            # Resize based on handle
+            new_rect = QRectF(rect)
+            
+            if 'n' in self.resize_mode:  # Top
+                new_rect.setTop(rect.top() + delta.y())
+            if 's' in self.resize_mode:  # Bottom
+                new_rect.setBottom(rect.bottom() + delta.y())
+            if 'w' in self.resize_mode:  # Left
+                new_rect.setLeft(rect.left() + delta.x())
+            if 'e' in self.resize_mode:  # Right
+                new_rect.setRight(rect.right() + delta.x())
+            
+            # Ensure minimum size
+            if new_rect.width() > 10 and new_rect.height() > 10:
+                self.selected_rect.setRect(new_rect)
+        
+        # Force viewport update to prevent artifacts
+        self.viewport().update()
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key.Key_Delete and self.selected_item:
-            self.scene.removeItem(self.selected_item)
-            if self.selected_item in self.annotations:
-                self.annotations.remove(self.selected_item)
-            self.selected_item = None
+        if event.key() == Qt.Key.Key_Delete and self.selected_rect:
+            self.scene.removeItem(self.selected_rect)
+            if self.selected_rect in self.annotations:
+                self.annotations.remove(self.selected_rect)
+            self.selected_rect = None
         super().keyPressEvent(event)
 
     def clear_annotations(self):
         for ann in self.annotations:
             self.scene.removeItem(ann)
         self.annotations.clear()
+        self.selected_rect = None
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        
+        # Draw resize handles for selected rectangle
+        if self.selected_rect and self.selected_rect.is_selected:
+            painter = QPainter(self.viewport())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            
+            # Get rectangle in viewport coordinates
+            rect = self.selected_rect.rect()
+            rect_pos = self.selected_rect.pos()
+            scene_rect = QRectF(rect.x() + rect_pos.x(), rect.y() + rect_pos.y(), rect.width(), rect.height())
+            viewport_rect = self.mapFromScene(scene_rect).boundingRect()
+            
+            # Draw handles
+            handle_size = 6
+            pen = QPen(QColor(0, 0, 0), 1)
+            brush = QBrush(QColor(255, 255, 255))
+            painter.setPen(pen)
+            painter.setBrush(brush)
+            
+            # Corner and side handle positions
+            handles = [
+                QPointF(viewport_rect.left(), viewport_rect.top()),      # nw
+                QPointF(viewport_rect.center().x(), viewport_rect.top()), # n
+                QPointF(viewport_rect.right(), viewport_rect.top()),     # ne
+                QPointF(viewport_rect.right(), viewport_rect.center().y()), # e
+                QPointF(viewport_rect.right(), viewport_rect.bottom()),  # se
+                QPointF(viewport_rect.center().x(), viewport_rect.bottom()), # s
+                QPointF(viewport_rect.left(), viewport_rect.bottom()),   # sw
+                QPointF(viewport_rect.left(), viewport_rect.center().y()) # w
+            ]
+            
+            for handle_pos in handles:
+                handle_rect = QRectF(handle_pos.x() - handle_size/2, handle_pos.y() - handle_size/2, 
+                                   handle_size, handle_size)
+                painter.drawRect(handle_rect)
 
 class PDFViewer(QWidget):
     """Single PDF viewer widget with rectangle annotation and per-page/global rotation"""
