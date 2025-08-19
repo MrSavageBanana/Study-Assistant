@@ -576,14 +576,22 @@ class DualPDFViewerApp(QMainWindow):
         layout = QHBoxLayout()
         layout.setSpacing(0)  # Remove spacing between viewers
 
-        # Left viewer = blue
+        # Left viewer = blue (640px)
         self.viewer1 = PDFViewer("1", QColor(0, 0, 255, 150))
-        # Right viewer = orange
+        self.viewer1.setFixedWidth(640)
+        
+        # Right viewer = orange (640px)
         self.viewer2 = PDFViewer("2", QColor(255, 165, 0, 150))
+        self.viewer2.setFixedWidth(640)
+        
+        # Third pane = empty (320px)
+        self.third_pane = QWidget()
+        self.third_pane.setFixedWidth(320)
+        self.third_pane.setStyleSheet("background-color: #1e1e1e; border-left: 1px solid #171717;")
 
-        # Add viewers directly without splitter
         layout.addWidget(self.viewer1)
         layout.addWidget(self.viewer2)
+        layout.addWidget(self.third_pane)
 
         central_widget.setLayout(layout)
 
