@@ -581,7 +581,121 @@ class PDFViewer(QWidget):
             if widget:
                 widget.hide()
 
+    def reset_viewer(self):
+        """Reset viewer to initial empty state"""
+        # Clear any loaded PDF
+        self.pdf_document = None
+        self.pdf_path = None
+        self.global_rotation = 0
+        self.current_page_index = 0
+        
+        # Clear all page widgets
+        self.page_widgets.clear()
+        while self.scroll_layout.count():
+            item = self.scroll_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        # Hide toolbar and show open button
+        self.hide_toolbar()
+        self.open_btn.show()
+        
+        # Reset page counter
+        self.update_page_counter_label()
+
     def toggle_annotation(self):
+        for w in self.page_widgets:
+            w.set_annotation_mode(self.rect_btn.isChecked())
+
+    def clear_annotations(self):
+        for w in self.page_widgets:
+            w.clear_annotations()
+
+    def open_pdf(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open PDF", "", "PDF Files (*.pdf)"
+        )
+        if file_path:
+            self.load_pdf(file_path)
+
+    def load_pdf(self, file_path: str):
+        try:
+            self.pdf_document = fitz.open(file_path)
+            self.pdf_path = file_path
+            self.global_rotation = 0
+            self.current_page_index = 0
+            self.open_btn.hide()
+            self.show_toolbar()
+            self.display_pages()
+        except Exception as e:
+            print(f"Error loading PDF: {e}")
+
+    def display_pages(self):
+        if not self.pdf_document:
+            return
+
+        self.page_widgets.clear()
+        while self.scroll_layout.count():
+            item = self.scroll_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for page_num in range(len(self.pdf_document)):
+            page = self.pdf_document[page_num]
+            pdf_page = PDFPage(page, page_num, owner=self, annotation_color=self.annotation_color)
+            pdf_page.rotation = self.global_rotation if self.rotate_all else 0
+            pdf_page.render_page()
+            self.connect_page_signals(pdf_page)  # Connect annotation change signals
+            self.scroll_layout.addWidget(pdf_page)
+            self.page_widgets.append(pdf_page)
+
+        self.update_page_counter_label()
+
+    def update_page_counter_label(self):
+        total = len(self.page_widgets)
+        if total == 0:
+            self.page_counter_label.setText("Page — / —")
+        else:
+            self.page_counter_label.setText(f"Page {self.current_page_index + 1} / {total}")
+
+    def set_current_page(self, index: int):
+        if not self.page_widgets:
+            return
+        index = max(0, min(index, len(self.page_widgets) - 1))
+        if index != self.current_page_index:
+            self.current_page_index = index
+            self.update_page_counter_label()
+
+    def update_current_page_from_scroll(self):
+        if not self.page_widgets:
+            return
+        vbar = self.scroll_area.verticalScrollBar()
+        vy = vbar.value()
+        viewport_h = self.scroll_area.viewport().height()
+        viewport_center_y = vy + viewport_h / 2
+
+        closest_idx = 0
+        closest_dist = float('inf')
+        for i, w in enumerate(self.page_widgets):
+            top = w.y()
+            h = w.height()
+            center = top + h / 2
+            dist = abs(center - viewport_center_y)
+            if dist < closest_dist:
+                closest_dist = dist
+                closest_idx = i
+        self.set_current_page(closest_idx)
+
+    def rotate_pages(self, angle: int):
+        if self.rotate_all:
+            self.global_rotation = (self.global_rotation + angle) % 360
+            current_idx = self.current_page_index
+            self.display_pages()
+            self.set_current_page(current_idx)
+        else:
+            if not self.page_widgets:
+                return
+            self.page_widgets[self.current_page_index].rotate(angle)
         for w in self.page_widgets:
             w.set_annotation_mode(self.rect_btn.isChecked())
 
@@ -874,7 +988,7 @@ class DualPDFViewerApp(QMainWindow):
         # Home screen
         self.home_screen = HomeScreen()
         self.home_screen.pair_selected.connect(self.load_pair)
-        self.home_screen.new_pair_requested.connect(self.show_pdf_viewer)
+        self.home_screen.new_pair_requested.connect(self.create_new_pair)
 
         # PDF viewer layout
         self.viewer_widget = QWidget()
@@ -883,6 +997,27 @@ class DualPDFViewerApp(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
+
+    def create_new_pair(self):
+        """Create a completely new, empty PDF pair"""
+        # Reset current pair info
+        self.current_pair_id = None
+        self.current_pair_name = ""
+        self.current_pair_description = ""
+        self.has_unsaved_changes = False
+        
+        # Reset both viewers to empty state
+        self.viewer1.reset_viewer()
+        self.viewer2.reset_viewer()
+        
+        # Show the PDF viewer
+        self.show_pdf_viewer()
+        
+        # Reset auto-save label
+        self.autosave_label.setText("Auto-save: Ready")
+        self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
+        
+        self.status_bar.showMessage("New PDF Pair - Open PDFs in both viewers to start")
 
     def init_pdf_viewer(self):
         """Initialize the PDF viewer components"""
