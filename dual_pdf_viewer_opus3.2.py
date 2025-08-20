@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dual PDF Viewer with Rectangle Annotations + Auto-Save + Home Screen
+Dual PDF Viewer with Rectangle Annotations + Auto-Save + Home Screen + Annotation Lock Mode
 Requirements: pip install PyQt6 PyMuPDF Pillow
 
 created with Claude. Account: Burhan Ra'if Kouri
@@ -19,8 +19,8 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QMessageBox, QLineEdit, QDialog, QDialogButtonBox,
     QFormLayout, QFrame, QTextEdit
 )
-from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QTimer
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseEvent, QFont, QCloseEvent
+from PyQt6.QtCore import Qt, QRectF, QPointF, pyqtSignal, QTimer, QEvent
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen, QBrush, QMouseEvent, QFont, QCloseEvent, QCursor
 
 class SavePairDialog(QDialog):
     """Dialog for entering pair name when saving"""
@@ -93,6 +93,7 @@ class PDFPage(QGraphicsView):
     """Custom widget for displaying a PDF page with MS Paint-style rectangle annotations"""
     
     annotation_modified = pyqtSignal()  # Signal when annotations are modified
+    annotation_created = pyqtSignal()   # Signal when a new annotation is created (for lock mode)
 
     def __init__(self, page, index: int, owner, annotation_color: QColor, parent=None):
         super().__init__(parent)
@@ -262,6 +263,10 @@ class PDFPage(QGraphicsView):
         return cursors.get(handle, Qt.CursorShape.ArrowCursor)
 
     def mousePressEvent(self, event: QMouseEvent):
+        app = self.window()
+        if app.auto_teleport_mode and int(self.owner.viewer_id) != app.current_active_viewer:
+            return
+
         if self.owner:
             self.owner.set_current_page(self.index)
             
@@ -321,6 +326,10 @@ class PDFPage(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
+        app = self.window()
+        if app.auto_teleport_mode and int(self.owner.viewer_id) != app.current_active_viewer:
+            return
+
         scene_pos = self.mapToScene(event.pos())
         
         if self.drawing and self.temp_rect:
@@ -365,6 +374,10 @@ class PDFPage(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
+        app = self.window()
+        if app.auto_teleport_mode and int(self.owner.viewer_id) != app.current_active_viewer:
+            return
+
         if self.drawing and self.temp_rect:
             self.drawing = False
             rect = self.temp_rect.rect()
@@ -374,7 +387,8 @@ class PDFPage(QGraphicsView):
                     self.selected_rect.deselect()
                 self.selected_rect = self.temp_rect
                 self.selected_rect.select()
-                self.emit_annotation_modified()  # New annotation created
+                self.emit_annotation_modified()  # Existing annotation modified signal
+                self.annotation_created.emit()   # NEW: Signal for lock mode
             else:
                 self.scene.removeItem(self.temp_rect)
             self.temp_rect = None
@@ -416,6 +430,10 @@ class PDFPage(QGraphicsView):
         self.viewport().update()
 
     def keyPressEvent(self, event):
+        app = self.window()
+        if app.auto_teleport_mode and int(self.owner.viewer_id) != app.current_active_viewer:
+            return
+
         if event.key() == Qt.Key.Key_Delete and self.selected_rect:
             self.scene.removeItem(self.selected_rect)
             if self.selected_rect in self.annotations:
@@ -469,6 +487,7 @@ class PDFViewer(QWidget):
     """Single PDF viewer widget with rectangle annotation and per-page/global rotation"""
     
     annotations_changed = pyqtSignal()  # Signal when any annotations change
+    annotation_created = pyqtSignal()   # Signal when a new annotation is created (for lock mode)
 
     def __init__(self, viewer_id: str, annotation_color: QColor, parent=None):
         super().__init__(parent)
@@ -542,6 +561,7 @@ class PDFViewer(QWidget):
     def connect_page_signals(self, page_widget):
         """Connect annotation change signals from a page widget"""
         page_widget.annotation_modified.connect(self.annotations_changed.emit)
+        page_widget.annotation_created.connect(self.annotation_created.emit)  # NEW
 
     def load_pdf_with_annotations(self, pdf_path, annotations_data):
         """Load PDF and apply saved annotations"""
@@ -604,98 +624,6 @@ class PDFViewer(QWidget):
         self.update_page_counter_label()
 
     def toggle_annotation(self):
-        for w in self.page_widgets:
-            w.set_annotation_mode(self.rect_btn.isChecked())
-
-    def clear_annotations(self):
-        for w in self.page_widgets:
-            w.clear_annotations()
-
-    def open_pdf(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open PDF", "", "PDF Files (*.pdf)"
-        )
-        if file_path:
-            self.load_pdf(file_path)
-
-    def load_pdf(self, file_path: str):
-        try:
-            self.pdf_document = fitz.open(file_path)
-            self.pdf_path = file_path
-            self.global_rotation = 0
-            self.current_page_index = 0
-            self.open_btn.hide()
-            self.show_toolbar()
-            self.display_pages()
-        except Exception as e:
-            print(f"Error loading PDF: {e}")
-
-    def display_pages(self):
-        if not self.pdf_document:
-            return
-
-        self.page_widgets.clear()
-        while self.scroll_layout.count():
-            item = self.scroll_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        for page_num in range(len(self.pdf_document)):
-            page = self.pdf_document[page_num]
-            pdf_page = PDFPage(page, page_num, owner=self, annotation_color=self.annotation_color)
-            pdf_page.rotation = self.global_rotation if self.rotate_all else 0
-            pdf_page.render_page()
-            self.connect_page_signals(pdf_page)  # Connect annotation change signals
-            self.scroll_layout.addWidget(pdf_page)
-            self.page_widgets.append(pdf_page)
-
-        self.update_page_counter_label()
-
-    def update_page_counter_label(self):
-        total = len(self.page_widgets)
-        if total == 0:
-            self.page_counter_label.setText("Page — / —")
-        else:
-            self.page_counter_label.setText(f"Page {self.current_page_index + 1} / {total}")
-
-    def set_current_page(self, index: int):
-        if not self.page_widgets:
-            return
-        index = max(0, min(index, len(self.page_widgets) - 1))
-        if index != self.current_page_index:
-            self.current_page_index = index
-            self.update_page_counter_label()
-
-    def update_current_page_from_scroll(self):
-        if not self.page_widgets:
-            return
-        vbar = self.scroll_area.verticalScrollBar()
-        vy = vbar.value()
-        viewport_h = self.scroll_area.viewport().height()
-        viewport_center_y = vy + viewport_h / 2
-
-        closest_idx = 0
-        closest_dist = float('inf')
-        for i, w in enumerate(self.page_widgets):
-            top = w.y()
-            h = w.height()
-            center = top + h / 2
-            dist = abs(center - viewport_center_y)
-            if dist < closest_dist:
-                closest_dist = dist
-                closest_idx = i
-        self.set_current_page(closest_idx)
-
-    def rotate_pages(self, angle: int):
-        if self.rotate_all:
-            self.global_rotation = (self.global_rotation + angle) % 360
-            current_idx = self.current_page_index
-            self.display_pages()
-            self.set_current_page(current_idx)
-        else:
-            if not self.page_widgets:
-                return
-            self.page_widgets[self.current_page_index].rotate(angle)
         for w in self.page_widgets:
             w.set_annotation_mode(self.rect_btn.isChecked())
 
@@ -948,13 +876,26 @@ class DualPDFViewerApp(QMainWindow):
         self.autosave_timer.setSingleShot(True)
         self.autosave_timer.timeout.connect(self.perform_autosave)
         
+        # Auto Teleport Mode variables
+        self.auto_teleport_mode = False
+        self.current_active_viewer = None  # Which viewer is currently active (1 or 2)
+        
         self.init_ui()
+        
+        # Install event filter for middle mouse click
+        QApplication.instance().installEventFilter(self)
         
         # Check if we should show home screen or viewer
         if self.has_valid_pairs():
             self.show_home_screen()
         else:
             self.show_pdf_viewer()
+
+    def eventFilter(self, obj, event):
+        if self.auto_teleport_mode and event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.MiddleButton:
+            self.switch_active_viewer()
+            return True
+        return super().eventFilter(obj, event)
 
     def has_valid_pairs(self):
         """Check if there are any valid PDF pairs saved"""
@@ -1010,6 +951,9 @@ class DualPDFViewerApp(QMainWindow):
         self.viewer1.reset_viewer()
         self.viewer2.reset_viewer()
         
+        # Reset auto teleport mode
+        self.disable_auto_teleport_mode()
+        
         # Show the PDF viewer
         self.show_pdf_viewer()
         
@@ -1034,6 +978,14 @@ class DualPDFViewerApp(QMainWindow):
         self.save_btn.clicked.connect(self.manual_save_pair)
         toolbar.addWidget(self.save_btn)
         
+        # Auto Teleport toggle
+        self.teleport_mode_btn = QPushButton("🔓 Auto Teleport")
+        self.teleport_mode_btn.setCheckable(True)
+        self.teleport_mode_btn.setToolTip("Toggle Auto Teleport - Middle mouse click to switch between PDFs")
+        self.teleport_mode_btn.clicked.connect(self.toggle_auto_teleport_mode)
+        self.teleport_mode_btn.setStyleSheet("QPushButton:checked { background-color: #ff6b35; color: white; }")
+        toolbar.addWidget(self.teleport_mode_btn)
+        
         # Auto-save status indicator
         self.autosave_label = QLabel("Auto-save: Ready")
         self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
@@ -1050,11 +1002,13 @@ class DualPDFViewerApp(QMainWindow):
         self.viewer1 = PDFViewer("1", QColor(0, 0, 255, 150))
         self.viewer1.setFixedWidth(640)
         self.viewer1.annotations_changed.connect(self.on_annotations_changed)
+        self.viewer1.annotation_created.connect(lambda: self.on_annotation_created(1))  # NEW
         
         # Right viewer = orange (640px)  
         self.viewer2 = PDFViewer("2", QColor(255, 165, 0, 150))
         self.viewer2.setFixedWidth(640)
         self.viewer2.annotations_changed.connect(self.on_annotations_changed)
+        self.viewer2.annotation_created.connect(lambda: self.on_annotation_created(2))  # NEW
         
         # Third pane = empty (320px)
         self.third_pane = QWidget()
@@ -1068,12 +1022,114 @@ class DualPDFViewerApp(QMainWindow):
         layout.addLayout(pdf_layout)
         self.viewer_widget.setLayout(layout)
 
+    def toggle_auto_teleport_mode(self):
+        """Toggle the auto teleport mode on/off"""
+        if self.teleport_mode_btn.isChecked():
+            self.enable_auto_teleport_mode()
+        else:
+            self.disable_auto_teleport_mode()
+
+    def enable_auto_teleport_mode(self):
+        """Enable auto teleport mode"""
+        # Check if both PDFs are loaded
+        if not self.viewer1.pdf_path or not self.viewer2.pdf_path:
+            QMessageBox.warning(self, 'Auto Teleport Error', 'Please load PDFs in both viewers before enabling Auto Teleport.')
+            self.teleport_mode_btn.setChecked(False)
+            return
+            
+        self.auto_teleport_mode = True
+        self.current_active_viewer = 1  # Start with viewer 1
+        
+        # Enable annotation mode on both viewers
+        self.viewer1.rect_btn.setChecked(True)
+        self.viewer1.toggle_annotation()
+        self.viewer2.rect_btn.setChecked(True)
+        self.viewer2.toggle_annotation()
+        
+        # Update button appearance
+        self.teleport_mode_btn.setText("🔒 Auto Teleport")
+        
+        # Apply restrictions
+        self.apply_teleport_restrictions()
+        
+        # Update status bar
+        self.update_teleport_status()
+
+    def disable_auto_teleport_mode(self):
+        """Disable auto teleport mode"""
+        self.auto_teleport_mode = False
+        self.current_active_viewer = None
+        
+        # Restore normal cursor for both viewers
+        self.viewer1.setCursor(Qt.CursorShape.ArrowCursor)
+        self.viewer2.setCursor(Qt.CursorShape.ArrowCursor)
+        self.viewer1.unsetCursor()
+        self.viewer2.unsetCursor()
+        
+        # Update button appearance
+        self.teleport_mode_btn.setChecked(False)
+        self.teleport_mode_btn.setText("🔓 Auto Teleport")
+        
+        # Clear status bar message
+        self.status_bar.showMessage("Auto Teleport disabled")
+
+    def apply_teleport_restrictions(self):
+        """Apply cursor restrictions for auto teleport mode"""
+        if not self.auto_teleport_mode or self.current_active_viewer is None:
+            return
+            
+        if self.current_active_viewer == 1:
+            self.viewer1.setCursor(Qt.CursorShape.CrossCursor)
+            self.viewer2.setCursor(Qt.CursorShape.ForbiddenCursor)
+        else:
+            self.viewer1.setCursor(Qt.CursorShape.ForbiddenCursor)
+            self.viewer2.setCursor(Qt.CursorShape.CrossCursor)
+
+    def update_teleport_status(self):
+        """Update status bar with current auto teleport state"""
+        if not self.auto_teleport_mode:
+            return
+            
+        viewer_name = "PDF A (Left)" if self.current_active_viewer == 1 else "PDF B (Right)"
+        message = f"🔒 AUTO TELEPORT: Active in {viewer_name} | Middle click to switch"
+        self.status_bar.showMessage(message)
+
+    def on_annotation_created(self, viewer_id):
+        pass  # Removed
+
+    def switch_active_viewer(self):
+        """Switch to the other PDF viewer"""
+        if not self.auto_teleport_mode:
+            return
+        
+        # Get mouse position relative to old viewer
+        old_viewer = self.viewer1 if self.current_active_viewer == 1 else self.viewer2
+        mouse_global = QCursor.pos()
+        mouse_local = old_viewer.mapFromGlobal(mouse_global)
+            
+        # Switch viewer
+        self.current_active_viewer = 2 if self.current_active_viewer == 1 else 1
+        
+        # Apply new restrictions
+        self.apply_teleport_restrictions()
+        
+        # Update status
+        self.update_teleport_status()
+        
+        # Teleport mouse to same relative position in new viewer
+        new_viewer = self.viewer1 if self.current_active_viewer == 1 else self.viewer2
+        new_global = new_viewer.mapToGlobal(mouse_local)
+        QCursor.setPos(new_global)
+
     def on_annotations_changed(self):
         """Called when annotations are modified - triggers auto-save"""
         if not self.is_closing and self.current_pair_id:
             self.has_unsaved_changes = True
-            self.autosave_label.setText("Auto-save: Pending...")
-            self.autosave_label.setStyleSheet("color: #ff9800; font-size: 11px; padding: 2px 4px;")
+            
+            # Don't interfere with auto teleport status messages
+            if not self.auto_teleport_mode:
+                self.autosave_label.setText("Auto-save: Pending...")
+                self.autosave_label.setStyleSheet("color: #ff9800; font-size: 11px; padding: 2px 4px;")
             
             # Restart the timer - this debounces rapid changes
             self.autosave_timer.stop()
@@ -1124,20 +1180,23 @@ class DualPDFViewerApp(QMainWindow):
                 json.dump(data, f, indent=2)
             
             self.has_unsaved_changes = False
-            self.autosave_label.setText("Auto-save: ✓ Saved")
-            self.autosave_label.setStyleSheet("color: #4caf50; font-size: 11px; padding: 2px 4px;")
-            
-            # Reset to "Ready" after 3 seconds
-            QTimer.singleShot(3000, self.reset_autosave_label)
+            # Only update autosave label if not in auto teleport mode
+            if not self.auto_teleport_mode:
+                self.autosave_label.setText("Auto-save: ✓ Saved")
+                self.autosave_label.setStyleSheet("color: #4caf50; font-size: 11px; padding: 2px 4px;")
+                
+                # Reset to "Ready" after 3 seconds
+                QTimer.singleShot(3000, self.reset_autosave_label)
             
         except Exception as e:
             print(f"Auto-save error: {e}")
-            self.autosave_label.setText("Auto-save: Error")
-            self.autosave_label.setStyleSheet("color: #f44336; font-size: 11px; padding: 2px 4px;")
+            if not self.auto_teleport_mode:
+                self.autosave_label.setText("Auto-save: Error")
+                self.autosave_label.setStyleSheet("color: #f44336; font-size: 11px; padding: 2px 4px;")
 
     def reset_autosave_label(self):
         """Reset auto-save label to ready state"""
-        if not self.has_unsaved_changes:
+        if not self.has_unsaved_changes and not self.auto_teleport_mode:
             self.autosave_label.setText("Auto-save: Ready")
             self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
 
@@ -1145,6 +1204,10 @@ class DualPDFViewerApp(QMainWindow):
         """Navigate to home screen with auto-save"""
         if self.has_unsaved_changes and self.current_pair_id:
             self.perform_autosave()
+        
+        # Disable auto teleport mode when going home
+        self.disable_auto_teleport_mode()
+        
         self.show_home_screen()
 
     def show_home_screen(self):
@@ -1152,6 +1215,9 @@ class DualPDFViewerApp(QMainWindow):
         # Auto-save before leaving if needed
         if self.has_unsaved_changes and self.current_pair_id:
             self.perform_autosave()
+        
+        # Disable auto teleport mode
+        self.disable_auto_teleport_mode()
         
         # Clear the main layout
         while self.main_layout.count():
@@ -1190,6 +1256,9 @@ class DualPDFViewerApp(QMainWindow):
             if not os.path.exists(pdf2_path):
                 QMessageBox.warning(self, 'File Not Found', f'PDF 2 not found: {pdf2_path}')
                 return
+            
+            # Disable auto teleport mode before loading
+            self.disable_auto_teleport_mode()
             
             # Switch to PDF viewer
             self.show_pdf_viewer()
@@ -1284,6 +1353,9 @@ class DualPDFViewerApp(QMainWindow):
     def closeEvent(self, event: QCloseEvent):
         """Handle application close event with auto-save"""
         self.is_closing = True
+        
+        # Disable auto teleport mode
+        self.disable_auto_teleport_mode()
         
         # Perform final auto-save if needed
         if self.has_unsaved_changes and self.current_pair_id:
