@@ -1109,10 +1109,7 @@ class DualPDFViewerApp(QMainWindow):
         
         counter_layout.addLayout(counter_display_layout)
         
-        # Add some spacing
-        counter_layout.addStretch()
-        
-        # Navigation controls
+        # Navigation controls - positioned right underneath the counters
         navigation_layout = QVBoxLayout()
         navigation_layout.setSpacing(10)
         
@@ -1173,6 +1170,16 @@ class DualPDFViewerApp(QMainWindow):
         navigation_layout.addLayout(answers_nav_layout)
         
         counter_layout.addLayout(navigation_layout)
+        
+        # Add some spacing
+        counter_layout.addStretch()
+        
+        # Link button - positioned where navigation was before
+        self.link_btn = QPushButton("Link🔗")
+        self.link_btn.setFixedHeight(50)
+        self.link_btn.setStyleSheet("QPushButton { background-color: #28a745; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #218838; }")
+        self.link_btn.setToolTip("Link functionality (currently disabled)")
+        counter_layout.addWidget(self.link_btn)
         
         self.third_pane.setLayout(counter_layout)
 
