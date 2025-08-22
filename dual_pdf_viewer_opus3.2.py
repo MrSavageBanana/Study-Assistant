@@ -978,6 +978,11 @@ class LinkScreen(QWidget):
             )
             # Hide specific buttons for link mode
             self.viewer1.hide_specific_buttons()
+            
+            # Restore scroll position to maintain current page
+            if hasattr(self.parent_app.viewer1, 'scroll_area'):
+                parent_scroll = self.parent_app.viewer1.scroll_area.verticalScrollBar().value()
+                self.viewer1.scroll_area.verticalScrollBar().setValue(parent_scroll)
         else:
             # No PDF loaded in viewer1, show open button
             self.viewer1.show_toolbar()
@@ -990,6 +995,11 @@ class LinkScreen(QWidget):
             )
             # Hide specific buttons for link mode
             self.viewer2.hide_specific_buttons()
+            
+            # Restore scroll position to maintain current page
+            if hasattr(self.parent_app.viewer2, 'scroll_area'):
+                parent_scroll = self.parent_app.viewer2.scroll_area.verticalScrollBar().value()
+                self.viewer2.scroll_area.verticalScrollBar().setValue(parent_scroll)
         else:
             # No PDF loaded in viewer2, show open button
             self.viewer2.show_toolbar()
