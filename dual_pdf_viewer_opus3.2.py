@@ -68,6 +68,8 @@ class SelectableRect(QGraphicsRectItem):
         self.selected_pen.setStyle(Qt.PenStyle.DashLine)
         self.is_selected = False
         self.page_widget = page_widget  # Reference to the page widget for notifications
+        self.selection_id = None  # Unique selection ID
+        self.page_index = None    # Page index where this selection exists
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, False)
         self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, False)
         
@@ -173,6 +175,20 @@ class PDFPage(QGraphicsView):
             ))
             
             annotation = SelectableRect(rect, pen, brush, page_widget=self)
+            
+            # Store the selection ID and page information in the annotation object
+            if 'selection_id' in ann_data:
+                annotation.selection_id = ann_data['selection_id']
+                annotation.page_index = ann_data.get('page', self.index)
+            else:
+                # For backward compatibility with old annotations, generate new IDs
+                rel_x = coords['x']
+                rel_y = coords['y']
+                rel_width = coords['width']
+                rel_height = coords['height']
+                annotation.selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
+                annotation.page_index = self.index
+            
             self.scene.addItem(annotation)
             self.annotations.append(annotation)
 
@@ -195,7 +211,12 @@ class PDFPage(QGraphicsView):
             rel_width = abs_width / self.page_width if self.page_width > 0 else 0
             rel_height = abs_height / self.page_height if self.page_height > 0 else 0
             
+            # Generate unique Selection ID based on coordinates and page
+            selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
+            
             annotations_data.append({
+                'selection_id': selection_id,
+                'page': self.index,
                 'coordinates': {
                     'x': rel_x,
                     'y': rel_y,
@@ -205,6 +226,14 @@ class PDFPage(QGraphicsView):
             })
         
         return annotations_data
+    
+    def generate_selection_id(self, x, y, width, height, page_index):
+        """Generate a unique Selection ID based on coordinates and page"""
+        # Create a hash from coordinates and page for uniqueness
+        coord_string = f"{x:.6f}_{y:.6f}_{width:.6f}_{height:.6f}_{page_index}"
+        import hashlib
+        hash_object = hashlib.md5(coord_string.encode())
+        return f"sel_{hash_object.hexdigest()[:12]}"
 
     def rotate(self, angle):
         self.rotation = (self.rotation + angle) % 360
@@ -385,6 +414,15 @@ class PDFPage(QGraphicsView):
             self.drawing = False
             rect = self.temp_rect.rect()
             if rect.width() > 5 and rect.height() > 5:
+                # Generate selection ID for the new annotation
+                rel_x = rect.x() / self.page_width if self.page_width > 0 else 0
+                rel_y = rect.y() / self.page_height if self.page_height > 0 else 0
+                rel_width = rect.width() / self.page_width if self.page_width > 0 else 0
+                rel_height = rect.height() / self.page_height if self.page_height > 0 else 0
+                
+                self.temp_rect.selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
+                self.temp_rect.page_index = self.index
+                
                 self.annotations.append(self.temp_rect)
                 if self.selected_rect:
                     self.selected_rect.deselect()
@@ -456,6 +494,27 @@ class PDFPage(QGraphicsView):
         self.selected_rect = None
         self.selection_changed.emit()  # Emit selection changed signal
         self.emit_annotation_modified()  # Annotations cleared
+    
+    def ensure_selection_ids(self):
+        """Ensure all annotations have selection IDs (for backward compatibility)"""
+        for annotation in self.annotations:
+            if not hasattr(annotation, 'selection_id') or annotation.selection_id is None:
+                rect = annotation.rect()
+                pos = annotation.pos()
+                
+                # Calculate relative coordinates
+                abs_x = rect.x() + pos.x()
+                abs_y = rect.y() + pos.y()
+                abs_width = rect.width()
+                abs_height = rect.height()
+                
+                rel_x = abs_x / self.page_width if self.page_width > 0 else 0
+                rel_y = abs_y / self.page_height if self.page_height > 0 else 0
+                rel_width = abs_width / self.page_width if self.page_width > 0 else 0
+                rel_height = abs_height / self.page_height if self.page_height > 0 else 0
+                
+                annotation.selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
+                annotation.page_index = self.index
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -583,6 +642,10 @@ class PDFViewer(QWidget):
             page_index = int(page_num)
             if page_index < len(self.page_widgets):
                 self.page_widgets[page_index].load_annotations(page_annotations)
+        
+        # Ensure all annotations have selection IDs (for backward compatibility)
+        for page_widget in self.page_widgets:
+            page_widget.ensure_selection_ids()
 
     def get_all_annotations_data(self):
         """Get annotations data for all pages"""
@@ -710,6 +773,10 @@ class PDFViewer(QWidget):
             self.page_widgets.append(pdf_page)
 
         self.update_page_counter_label()
+        
+        # Ensure all annotations have selection IDs
+        for page_widget in self.page_widgets:
+            page_widget.ensure_selection_ids()
 
     def update_page_counter_label(self):
         total = len(self.page_widgets)
@@ -1830,7 +1897,9 @@ class DualPDFViewerApp(QMainWindow):
                     self.all_annotations[1].append({
                         'page_index': page_index,
                         'annotation': annotation,
-                        'y_position': y_pos
+                        'y_position': y_pos,
+                        'selection_id': getattr(annotation, 'selection_id', None),
+                        'page': getattr(annotation, 'page_index', page_index)
                     })
         
         # Rebuild for viewer 2 (Answers)
@@ -1845,7 +1914,9 @@ class DualPDFViewerApp(QMainWindow):
                     self.all_annotations[2].append({
                         'page_index': page_index,
                         'annotation': annotation,
-                        'y_position': y_pos
+                        'y_position': y_pos,
+                        'selection_id': getattr(annotation, 'selection_id', None),
+                        'page': getattr(annotation, 'page_index', page_index)
                     })
         
         # Sort annotations by page number first, then by Y position (top to bottom)
