@@ -94,6 +94,7 @@ class PDFPage(QGraphicsView):
     
     annotation_modified = pyqtSignal()  # Signal when annotations are modified
     annotation_created = pyqtSignal()   # Signal when a new annotation is created (for lock mode)
+    selection_changed = pyqtSignal()    # Signal when selection changes
 
     def __init__(self, page, index: int, owner, annotation_color: QColor, parent=None):
         super().__init__(parent)
@@ -295,6 +296,7 @@ class PDFPage(QGraphicsView):
             self.selected_rect = clicked_rect
             self.selected_rect.select()
             self.viewport().update()
+            self.selection_changed.emit()  # Emit selection changed signal
             
             handle = self.get_handle_at_pos(self.selected_rect, scene_pos)
             if handle:
@@ -308,6 +310,7 @@ class PDFPage(QGraphicsView):
                 self.selected_rect.deselect()
                 self.selected_rect = None
                 self.viewport().update()
+                self.selection_changed.emit()  # Emit selection changed signal
             
             if self.annotation_mode and event.button() == Qt.MouseButton.LeftButton:
                 self.drawing = True
@@ -387,6 +390,7 @@ class PDFPage(QGraphicsView):
                     self.selected_rect.deselect()
                 self.selected_rect = self.temp_rect
                 self.selected_rect.select()
+                self.selection_changed.emit()  # Emit selection changed signal
                 self.emit_annotation_modified()  # Existing annotation modified signal
                 self.annotation_created.emit()   # NEW: Signal for lock mode
             else:
@@ -439,6 +443,7 @@ class PDFPage(QGraphicsView):
             if self.selected_rect in self.annotations:
                 self.annotations.remove(self.selected_rect)
             self.selected_rect = None
+            self.selection_changed.emit()  # Emit selection changed signal
             self.emit_annotation_modified()  # Annotation deleted
         super().keyPressEvent(event)
 
@@ -449,6 +454,7 @@ class PDFPage(QGraphicsView):
         if self.selected_rect:
             self.selected_rect.deselect()
         self.selected_rect = None
+        self.selection_changed.emit()  # Emit selection changed signal
         self.emit_annotation_modified()  # Annotations cleared
 
     def paintEvent(self, event):
@@ -490,6 +496,7 @@ class PDFViewer(QWidget):
     
     annotations_changed = pyqtSignal()  # Signal when any annotations change
     annotation_created = pyqtSignal()   # Signal when a new annotation is created (for lock mode)
+    selection_changed = pyqtSignal()    # Signal when selection changes
     pdf_loaded = pyqtSignal()          # Signal when PDF is loaded
 
     def __init__(self, viewer_id: str, annotation_color: QColor, parent=None):
@@ -565,6 +572,7 @@ class PDFViewer(QWidget):
         """Connect annotation change signals from a page widget"""
         page_widget.annotation_modified.connect(self.annotations_changed.emit)
         page_widget.annotation_created.connect(self.annotation_created.emit)  # NEW
+        page_widget.selection_changed.connect(self.selection_changed.emit)  # NEW: Connect selection changed signal
 
     def load_pdf_with_annotations(self, pdf_path, annotations_data):
         """Load PDF and apply saved annotations"""
@@ -926,37 +934,53 @@ class LinkScreen(QWidget):
         self.viewer1 = PDFViewer("1", QColor(255, 0, 0, 150))  # Red color
         self.viewer1.setFixedWidth(640)
         self.viewer1.annotations_changed.connect(self.on_annotations_changed)
+        self.viewer1.selection_changed.connect(self.on_selection_changed)
         
         # Right viewer = red rectangles (640px)  
         self.viewer2 = PDFViewer("2", QColor(255, 0, 0, 150))  # Red color
         self.viewer2.setFixedWidth(640)
         self.viewer2.annotations_changed.connect(self.on_annotations_changed)
+        self.viewer2.selection_changed.connect(self.on_selection_changed)
         
-        # Third pane = info panel (320px)
+        # Third pane = side panel (320px)
         self.third_pane = QWidget()
         self.third_pane.setFixedWidth(320)
-        self.third_pane.setStyleSheet("background-color: #1e1e1e; border-left: 1px solid #171717;")
+        self.third_pane.setStyleSheet("background-color: transparent; border: none;")
         
-        # Create info layout
-        info_layout = QVBoxLayout()
-        info_layout.setContentsMargins(20, 20, 20, 20)
-        info_layout.setSpacing(20)
+        # Create side panel layout
+        side_layout = QVBoxLayout()
+        side_layout.setContentsMargins(20, 20, 20, 20)
+        side_layout.setSpacing(20)
         
-        # Title
-        info_title = QLabel("Link Mode")
-        info_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_title.setStyleSheet("color: #ffffff; font-size: 18px; font-weight: bold;")
-        info_layout.addWidget(info_title)
+        # Go back to Selection Editor button at the top
+        self.back_to_selection_btn = QPushButton("← Go back to Selection Editor")
+        self.back_to_selection_btn.setFixedHeight(50)
+        self.back_to_selection_btn.setStyleSheet("QPushButton { background-color: #0078d4; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #106ebe; }")
+        self.back_to_selection_btn.clicked.connect(self.go_back_to_selection)
+        side_layout.addWidget(self.back_to_selection_btn)
         
-        # Info text
-        info_text = QLabel("All rectangles are currently unlinked (red).\n\nLink functionality coming soon...")
-        info_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_text.setWordWrap(True)
-        info_text.setStyleSheet("color: #cccccc; font-size: 14px; line-height: 1.4;")
-        info_layout.addWidget(info_text)
+        # Save button (always visible, doesn't change)
+        self.save_btn = QPushButton("💾 Save")
+        self.save_btn.setFixedHeight(50)
+        self.save_btn.setStyleSheet("QPushButton { background-color: #28a745; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #218838; }")
+        self.save_btn.clicked.connect(self.save_from_link_mode)
+        side_layout.addWidget(self.save_btn)
         
-        info_layout.addStretch()
-        self.third_pane.setLayout(info_layout)
+        # Auto-save status (always visible, doesn't change)
+        self.autosave_label = QLabel("Auto-save: Ready")
+        self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
+        side_layout.addWidget(self.autosave_label)
+        
+        # Mark selection as Stem button
+        self.mark_stem_btn = QPushButton("Mark selection as Stem")
+        self.mark_stem_btn.setFixedHeight(50)
+        self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
+        self.mark_stem_btn.setEnabled(False)  # Initially disabled
+        self.mark_stem_btn.clicked.connect(self.mark_selection_as_stem)
+        side_layout.addWidget(self.mark_stem_btn)
+        
+        side_layout.addStretch()
+        self.third_pane.setLayout(side_layout)
 
         pdf_layout.addWidget(self.viewer1)
         pdf_layout.addWidget(self.viewer2)
@@ -1004,11 +1028,24 @@ class LinkScreen(QWidget):
             # No PDF loaded in viewer2, show open button
             self.viewer2.show_toolbar()
             self.viewer2.hide_specific_buttons()
+        
+        # Update auto-save status from parent app
+        if hasattr(self.parent_app, 'autosave_label'):
+            self.autosave_label.setText(self.parent_app.autosave_label.text())
+            self.autosave_label.setStyleSheet(self.parent_app.autosave_label.styleSheet())
+        
+        # Update the mark stem button state
+        self.update_mark_stem_button_state()
     
     def on_annotations_changed(self):
         """Handle annotation changes in link mode"""
-        # For now, just pass through to parent if needed
-        pass
+        # Update the mark stem button state when annotations change
+        self.update_mark_stem_button_state()
+    
+    def on_selection_changed(self):
+        """Handle selection changes in link mode"""
+        # Update the mark stem button state when selection changes
+        self.update_mark_stem_button_state()
     
     def go_to_home(self):
         """Navigate to home screen"""
@@ -1029,6 +1066,43 @@ class LinkScreen(QWidget):
             if hasattr(self.parent_app, 'viewer2'):
                 self.parent_app.viewer2.show_specific_buttons()
             self.parent_app.show_pdf_viewer()
+    
+    def save_from_link_mode(self):
+        """Save from link mode - delegates to parent app"""
+        if self.parent_app:
+            self.parent_app.manual_save_pair()
+    
+    def mark_selection_as_stem(self):
+        """Mark the selected selection as stem (dummy function)"""
+        # This is a dummy function that does nothing when clicked
+        pass
+    
+    def update_mark_stem_button_state(self):
+        """Update the state of the Mark selection as Stem button based on current selection"""
+        if not self.parent_app:
+            return
+            
+        # Check if there's a selection in the Question PDF (viewer1)
+        question_selection = None
+        if hasattr(self.parent_app, 'viewer1') and hasattr(self.parent_app.viewer1, 'page_widgets'):
+            for page_widget in self.parent_app.viewer1.page_widgets:
+                if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                    question_selection = page_widget.selected_rect
+                    break
+        
+        # Check if there's a selection in the Answer PDF (viewer2)
+        answer_selection = None
+        if hasattr(self.parent_app, 'viewer2') and hasattr(self.parent_app.viewer2, 'page_widgets'):
+            for page_widget in self.parent_app.viewer2.page_widgets:
+                if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                    answer_selection = page_widget.selected_rect
+                    break
+        
+        # Enable button only if there's a selection in Question PDF and no selection in Answer PDF
+        if question_selection and not answer_selection:
+            self.mark_stem_btn.setEnabled(True)
+        else:
+            self.mark_stem_btn.setEnabled(False)
 
 class DualPDFViewerApp(QMainWindow):
     def __init__(self):
@@ -1194,12 +1268,14 @@ class DualPDFViewerApp(QMainWindow):
         self.viewer1.setFixedWidth(640)
         self.viewer1.annotations_changed.connect(self.on_annotations_changed)
         self.viewer1.annotation_created.connect(lambda: self.on_annotation_created(1))  # NEW
+        self.viewer1.selection_changed.connect(self.on_selection_changed)  # NEW: Connect selection changed signal
         
         # Right viewer = orange (640px)  
         self.viewer2 = PDFViewer("2", QColor(255, 165, 0, 150))
         self.viewer2.setFixedWidth(640)
         self.viewer2.annotations_changed.connect(self.on_annotations_changed)
         self.viewer2.annotation_created.connect(lambda: self.on_annotation_created(2))  # NEW
+        self.viewer2.selection_changed.connect(self.on_selection_changed)  # NEW: Connect selection changed signal
         
         # Connect annotation signals to update counter
         self.viewer1.annotations_changed.connect(self.update_annotation_counter)
@@ -1607,6 +1683,12 @@ class DualPDFViewerApp(QMainWindow):
 
     def on_annotation_created(self, viewer_id):
         pass  # Removed
+    
+    def on_selection_changed(self):
+        """Called when selection changes - updates link screen button state"""
+        # Update link screen button state if it exists
+        if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'update_mark_stem_button_state'):
+            self.link_screen.update_mark_stem_button_state()
 
     def switch_active_viewer(self):
         """Switch to the other PDF viewer"""
@@ -1649,6 +1731,11 @@ class DualPDFViewerApp(QMainWindow):
         # Rebuild annotation lists for navigation
         self.rebuild_annotation_lists()
         self.update_navigation_labels()
+        
+        # Update link screen auto-save status if it exists
+        if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'autosave_label'):
+            self.link_screen.autosave_label.setText(self.autosave_label.text())
+            self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
 
     def perform_autosave(self):
         """Perform the actual auto-save operation"""
@@ -1703,17 +1790,32 @@ class DualPDFViewerApp(QMainWindow):
                 # Reset to "Ready" after 3 seconds
                 QTimer.singleShot(3000, self.reset_autosave_label)
             
+            # Update link screen auto-save status if it exists
+            if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'autosave_label'):
+                self.link_screen.autosave_label.setText(self.autosave_label.text())
+                self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
+            
         except Exception as e:
             print(f"Auto-save error: {e}")
             if not self.auto_teleport_mode:
                 self.autosave_label.setText("Auto-save: Error")
                 self.autosave_label.setStyleSheet("color: #f44336; font-size: 11px; padding: 2px 4px;")
+                
+                # Update link screen auto-save status if it exists
+                if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'autosave_label'):
+                    self.link_screen.autosave_label.setText(self.autosave_label.text())
+                    self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
 
     def reset_autosave_label(self):
         """Reset auto-save label to ready state"""
         if not self.has_unsaved_changes and not self.auto_teleport_mode:
             self.autosave_label.setText("Auto-save: Ready")
             self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
+            
+            # Update link screen auto-save status if it exists
+            if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'autosave_label'):
+                self.link_screen.autosave_label.setText(self.autosave_label.text())
+                self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
 
     def go_to_home(self):
         """Navigate to home screen with auto-save"""
@@ -1779,6 +1881,11 @@ class DualPDFViewerApp(QMainWindow):
         
         # Disable auto teleport mode when entering link mode
         self.disable_auto_teleport_mode()
+        
+        # Sync auto-save status
+        if hasattr(self.link_screen, 'autosave_label'):
+            self.link_screen.autosave_label.setText(self.autosave_label.text())
+            self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
         
         self.status_bar.showMessage("Link Mode - All rectangles are unlinked (red)")
 
