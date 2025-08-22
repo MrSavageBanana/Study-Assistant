@@ -1384,19 +1384,35 @@ class DualPDFViewerApp(QMainWindow):
         if hasattr(self.viewer1, 'page_widgets'):
             for page_index, page_widget in enumerate(self.viewer1.page_widgets):
                 for annotation in page_widget.annotations:
+                    # Get the Y position of the annotation for sorting within the page
+                    rect = annotation.rect()
+                    pos = annotation.pos()
+                    y_pos = rect.y() + pos.y()
+                    
                     self.all_annotations[1].append({
                         'page_index': page_index,
-                        'annotation': annotation
+                        'annotation': annotation,
+                        'y_position': y_pos
                     })
         
         # Rebuild for viewer 2 (Answers)
         if hasattr(self.viewer2, 'page_widgets'):
             for page_index, page_widget in enumerate(self.viewer2.page_widgets):
                 for annotation in page_widget.annotations:
+                    # Get the Y position of the annotation for sorting within the page
+                    rect = annotation.rect()
+                    pos = annotation.pos()
+                    y_pos = rect.y() + pos.y()
+                    
                     self.all_annotations[2].append({
                         'page_index': page_index,
-                        'annotation': annotation
+                        'annotation': annotation,
+                        'y_position': y_pos
                     })
+        
+        # Sort annotations by page number first, then by Y position (top to bottom)
+        for viewer_id in [1, 2]:
+            self.all_annotations[viewer_id].sort(key=lambda x: (x['page_index'], x['y_position']))
         
         # Reset current indices if they're out of bounds
         for viewer_id in [1, 2]:
