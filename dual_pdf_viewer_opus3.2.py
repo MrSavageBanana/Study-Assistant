@@ -603,6 +603,22 @@ class PDFViewer(QWidget):
             widget = self.toolbar_layout.itemAt(i).widget()
             if widget:
                 widget.hide()
+    
+    def hide_specific_buttons(self):
+        """Hide specific buttons for link mode"""
+        self.rect_btn.hide()
+        self.clear_ann_btn.hide()
+        self.rotate_left_btn.hide()
+        self.rotate_right_btn.hide()
+        self.toggle_rotate_btn.hide()
+    
+    def show_specific_buttons(self):
+        """Show specific buttons for normal mode"""
+        self.rect_btn.show()
+        self.clear_ann_btn.show()
+        self.rotate_left_btn.show()
+        self.rotate_right_btn.show()
+        self.toggle_rotate_btn.show()
 
     def reset_viewer(self):
         """Reset viewer to initial empty state"""
@@ -877,6 +893,133 @@ class HomeScreen(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, 'Error', f'Failed to delete pair: {e}')
 
+class LinkScreen(QWidget):
+    """Link screen showing PDF viewer with red rectangles and hidden buttons"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_app = parent
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # Top toolbar with only Home and Back buttons
+        toolbar = QHBoxLayout()
+        
+        self.home_btn = QPushButton("🏠 Home")
+        self.home_btn.clicked.connect(self.go_to_home)
+        toolbar.addWidget(self.home_btn)
+        
+        self.back_btn = QPushButton("← Back to Selection Editor")
+        self.back_btn.clicked.connect(self.go_back_to_selection)
+        toolbar.addWidget(self.back_btn)
+        
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
+        
+        # PDF viewers (duplicate of main viewer but with red rectangles)
+        pdf_layout = QHBoxLayout()
+        pdf_layout.setSpacing(0)
+
+        # Left viewer = red rectangles (640px)
+        self.viewer1 = PDFViewer("1", QColor(255, 0, 0, 150))  # Red color
+        self.viewer1.setFixedWidth(640)
+        self.viewer1.annotations_changed.connect(self.on_annotations_changed)
+        
+        # Right viewer = red rectangles (640px)  
+        self.viewer2 = PDFViewer("2", QColor(255, 0, 0, 150))  # Red color
+        self.viewer2.setFixedWidth(640)
+        self.viewer2.annotations_changed.connect(self.on_annotations_changed)
+        
+        # Third pane = info panel (320px)
+        self.third_pane = QWidget()
+        self.third_pane.setFixedWidth(320)
+        self.third_pane.setStyleSheet("background-color: #1e1e1e; border-left: 1px solid #171717;")
+        
+        # Create info layout
+        info_layout = QVBoxLayout()
+        info_layout.setContentsMargins(20, 20, 20, 20)
+        info_layout.setSpacing(20)
+        
+        # Title
+        info_title = QLabel("Link Mode")
+        info_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_title.setStyleSheet("color: #ffffff; font-size: 18px; font-weight: bold;")
+        info_layout.addWidget(info_title)
+        
+        # Info text
+        info_text = QLabel("All rectangles are currently unlinked (red).\n\nLink functionality coming soon...")
+        info_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_text.setWordWrap(True)
+        info_text.setStyleSheet("color: #cccccc; font-size: 14px; line-height: 1.4;")
+        info_layout.addWidget(info_text)
+        
+        info_layout.addStretch()
+        self.third_pane.setLayout(info_layout)
+
+        pdf_layout.addWidget(self.viewer1)
+        pdf_layout.addWidget(self.viewer2)
+        pdf_layout.addWidget(self.third_pane)
+        
+        layout.addLayout(pdf_layout)
+        self.setLayout(layout)
+        
+    def load_pdfs_from_parent(self):
+        """Load PDFs and annotations from the parent app's viewers"""
+        if not self.parent_app:
+            return
+            
+        # Load PDFs if they exist in parent
+        if hasattr(self.parent_app, 'viewer1') and self.parent_app.viewer1.pdf_path:
+            self.viewer1.load_pdf_with_annotations(
+                self.parent_app.viewer1.pdf_path,
+                self.parent_app.viewer1.get_all_annotations_data()
+            )
+            # Hide specific buttons for link mode
+            self.viewer1.hide_specific_buttons()
+        else:
+            # No PDF loaded in viewer1, show open button
+            self.viewer1.show_toolbar()
+            self.viewer1.hide_specific_buttons()
+            
+        if hasattr(self.parent_app, 'viewer2') and self.parent_app.viewer2.pdf_path:
+            self.viewer2.load_pdf_with_annotations(
+                self.parent_app.viewer2.pdf_path,
+                self.parent_app.viewer2.get_all_annotations_data()
+            )
+            # Hide specific buttons for link mode
+            self.viewer2.hide_specific_buttons()
+        else:
+            # No PDF loaded in viewer2, show open button
+            self.viewer2.show_toolbar()
+            self.viewer2.hide_specific_buttons()
+    
+    def on_annotations_changed(self):
+        """Handle annotation changes in link mode"""
+        # For now, just pass through to parent if needed
+        pass
+    
+    def go_to_home(self):
+        """Navigate to home screen"""
+        if self.parent_app:
+            # Show the specific buttons again before going home
+            if hasattr(self.parent_app, 'viewer1'):
+                self.parent_app.viewer1.show_specific_buttons()
+            if hasattr(self.parent_app, 'viewer2'):
+                self.parent_app.viewer2.show_specific_buttons()
+            self.parent_app.show_home_screen()
+    
+    def go_back_to_selection(self):
+        """Go back to the main selection editor"""
+        if self.parent_app:
+            # Show the specific buttons again before going back
+            if hasattr(self.parent_app, 'viewer1'):
+                self.parent_app.viewer1.show_specific_buttons()
+            if hasattr(self.parent_app, 'viewer2'):
+                self.parent_app.viewer2.show_specific_buttons()
+            self.parent_app.show_pdf_viewer()
+
 class DualPDFViewerApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -957,6 +1100,9 @@ class DualPDFViewerApp(QMainWindow):
         # PDF viewer layout
         self.viewer_widget = QWidget()
         self.init_pdf_viewer()
+        
+        # Link screen
+        self.link_screen = LinkScreen(self)
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -979,6 +1125,10 @@ class DualPDFViewerApp(QMainWindow):
         
         # Show the PDF viewer
         self.show_pdf_viewer()
+        
+        # Make sure specific buttons are visible
+        self.viewer1.show_specific_buttons()
+        self.viewer2.show_specific_buttons()
         
         # Reset auto-save label
         self.autosave_label.setText("Auto-save: Ready")
@@ -1178,7 +1328,8 @@ class DualPDFViewerApp(QMainWindow):
         self.link_btn = QPushButton("Link🔗")
         self.link_btn.setFixedHeight(50)
         self.link_btn.setStyleSheet("QPushButton { background-color: #28a745; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #218838; }")
-        self.link_btn.setToolTip("Link functionality (currently disabled)")
+        self.link_btn.setToolTip("Click to enter Link Mode")
+        self.link_btn.clicked.connect(self.show_link_screen)
         counter_layout.addWidget(self.link_btn)
         
         self.third_pane.setLayout(counter_layout)
@@ -1562,6 +1713,12 @@ class DualPDFViewerApp(QMainWindow):
         # Disable auto teleport mode when going home
         self.disable_auto_teleport_mode()
         
+        # Make sure specific buttons are visible when going home
+        if hasattr(self, 'viewer1'):
+            self.viewer1.show_specific_buttons()
+        if hasattr(self, 'viewer2'):
+            self.viewer2.show_specific_buttons()
+        
         self.show_home_screen()
 
     def show_home_screen(self):
@@ -1596,6 +1753,25 @@ class DualPDFViewerApp(QMainWindow):
         self.main_layout.addWidget(self.viewer_widget)
         self.status_bar.showMessage("PDF Viewer - Open PDFs to start annotating")
 
+    def show_link_screen(self):
+        """Show the link screen"""
+        # Clear the main layout
+        while self.main_layout.count():
+            item = self.main_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        
+        # Add link screen
+        self.main_layout.addWidget(self.link_screen)
+        
+        # Load PDFs and annotations from parent viewers
+        self.link_screen.load_pdfs_from_parent()
+        
+        # Disable auto teleport mode when entering link mode
+        self.disable_auto_teleport_mode()
+        
+        self.status_bar.showMessage("Link Mode - All rectangles are unlinked (red)")
+
     def load_pair(self, pair_data):
         """Load a PDF pair with its annotations"""
         try:
@@ -1623,6 +1799,10 @@ class DualPDFViewerApp(QMainWindow):
             
             self.viewer1.load_pdf_with_annotations(pdf1_path, pdf1_annotations)
             self.viewer2.load_pdf_with_annotations(pdf2_path, pdf2_annotations)
+            
+            # Make sure specific buttons are visible
+            self.viewer1.show_specific_buttons()
+            self.viewer2.show_specific_buttons()
             
             # Store current pair info
             self.current_pair_id = pair_data.get('pair_id')
