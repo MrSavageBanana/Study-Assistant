@@ -1331,9 +1331,26 @@ class DualPDFViewerApp(QMainWindow):
         # Go to the page with this annotation
         target_page = annotation_info['page_index']
         if target_page < len(viewer.page_widgets):
-            # Scroll to the page
+            # Get the target page widget
             page_widget = viewer.page_widgets[target_page]
-            viewer.scroll_area.ensureWidgetVisible(page_widget)
+            
+            # Calculate the position to center the page in the viewport
+            scroll_area = viewer.scroll_area
+            viewport_height = scroll_area.viewport().height()
+            
+            # Get the page's position relative to the scroll content
+            page_pos = page_widget.mapTo(viewer.scroll_content, QPointF(0, 0))
+            page_height = page_widget.height()
+            
+            # Calculate scroll position to center the page
+            target_scroll_y = page_pos.y() - (viewport_height - page_height) / 2
+            
+            # Ensure scroll position is within bounds
+            max_scroll = viewer.scroll_content.height() - viewport_height
+            target_scroll_y = max(0, min(target_scroll_y, max_scroll))
+            
+            # Scroll to the calculated position
+            scroll_area.verticalScrollBar().setValue(int(target_scroll_y))
             
             # Highlight the annotation
             annotation_item = annotation_info['annotation']
