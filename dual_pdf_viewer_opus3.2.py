@@ -1002,42 +1002,44 @@ class LinkScreen(QWidget):
         if not self.parent_app:
             return
             
+        # Store scroll positions for delayed restoration
+        self.pending_scroll_positions = {}
+        
         # Load PDFs if they exist in parent
         if hasattr(self.parent_app, 'viewer1') and self.parent_app.viewer1.pdf_path:
+            # Store scroll position before loading
+            if hasattr(self.parent_app.viewer1, 'scroll_area'):
+                self.pending_scroll_positions['viewer1'] = self.parent_app.viewer1.scroll_area.verticalScrollBar().value()
+            
             self.viewer1.load_pdf_with_annotations(
                 self.parent_app.viewer1.pdf_path,
                 self.parent_app.viewer1.get_all_annotations_data()
             )
             # Hide specific buttons for link mode
             self.viewer1.hide_specific_buttons()
-            
-            # Restore scroll position to maintain current page
-            if hasattr(self.parent_app.viewer1, 'scroll_area'):
-                parent_scroll = self.parent_app.viewer1.scroll_area.verticalScrollBar().value()
-                self.viewer1.scroll_area.verticalScrollBar().setValue(parent_scroll)
         else:
             # No PDF loaded in viewer1, show open button
             self.viewer1.show_toolbar()
             self.viewer1.hide_specific_buttons()
             
         if hasattr(self.parent_app, 'viewer2') and self.parent_app.viewer2.pdf_path:
+            # Store scroll position before loading
+            if hasattr(self.parent_app.viewer2, 'scroll_area'):
+                self.pending_scroll_positions['viewer2'] = self.parent_app.viewer2.scroll_area.verticalScrollBar().value()
+            
             self.viewer2.load_pdf_with_annotations(
                 self.parent_app.viewer2.pdf_path,
                 self.parent_app.viewer2.get_all_annotations_data()
             )
             # Hide specific buttons for link mode
             self.viewer2.hide_specific_buttons()
-            
-            # Restore scroll position to maintain current page
-            if hasattr(self.parent_app.viewer2, 'scroll_area'):
-                parent_scroll = self.parent_app.viewer2.scroll_area.verticalScrollBar().value()
-                self.viewer2.scroll_area.verticalScrollBar().setValue(parent_scroll)
         else:
             # No PDF loaded in viewer2, show open button
             self.viewer2.show_toolbar()
             self.viewer2.hide_specific_buttons()
         
-
+        # Use a timer to restore scroll positions after pages are fully rendered
+        QTimer.singleShot(100, self.restore_scroll_positions)
         
         # Update the mark stem button state and set initial tooltip
         self.update_mark_stem_button_state()
@@ -1251,6 +1253,26 @@ class LinkScreen(QWidget):
         """Toggle the auto teleport mode on/off"""
         if self.parent_app:
             self.parent_app.toggle_auto_teleport_mode()
+    
+    def restore_scroll_positions(self):
+        """Restore scroll positions after PDF pages are fully loaded and rendered"""
+        if not hasattr(self, 'pending_scroll_positions'):
+            return
+            
+        # Restore scroll position for viewer1
+        if 'viewer1' in self.pending_scroll_positions and hasattr(self, 'viewer1'):
+            scroll_value = self.pending_scroll_positions['viewer1']
+            if hasattr(self.viewer1, 'scroll_area') and self.viewer1.scroll_area:
+                self.viewer1.scroll_area.verticalScrollBar().setValue(scroll_value)
+        
+        # Restore scroll position for viewer2
+        if 'viewer2' in self.pending_scroll_positions and hasattr(self, 'viewer2'):
+            scroll_value = self.pending_scroll_positions['viewer2']
+            if hasattr(self.viewer2, 'scroll_area') and self.viewer2.scroll_area:
+                self.viewer2.scroll_area.verticalScrollBar().setValue(scroll_value)
+        
+        # Clear the pending scroll positions
+        self.pending_scroll_positions.clear()
 
 class DualPDFViewerApp(QMainWindow):
     def __init__(self):
