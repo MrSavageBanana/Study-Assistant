@@ -980,9 +980,11 @@ class LinkScreen(QWidget):
         # Mark selection as Stem button
         self.mark_stem_btn = QPushButton("Mark selection as Stem")
         self.mark_stem_btn.setFixedHeight(50)
-        self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
+        self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
         self.mark_stem_btn.setEnabled(False)  # Initially disabled
         self.mark_stem_btn.clicked.connect(self.mark_selection_as_stem)
+        # Set initial tooltip
+        self.mark_stem_btn.setToolTip("No selection in Question PDF")
         side_layout.addWidget(self.mark_stem_btn)
         
         side_layout.addStretch()
@@ -1037,7 +1039,7 @@ class LinkScreen(QWidget):
         
 
         
-        # Update the mark stem button state
+        # Update the mark stem button state and set initial tooltip
         self.update_mark_stem_button_state()
         
         # Sync toolbar state with parent app
@@ -1096,6 +1098,9 @@ class LinkScreen(QWidget):
     def go_back_to_selection(self):
         """Go back to the main selection editor"""
         if self.parent_app:
+            # Sync selections from LinkScreen back to parent app viewers
+            self.sync_selections_to_parent()
+            
             # Show the specific buttons again before going back
             if hasattr(self.parent_app, 'viewer1'):
                 self.parent_app.viewer1.show_specific_buttons()
@@ -1121,32 +1126,121 @@ class LinkScreen(QWidget):
         # This is a dummy function that does nothing when clicked
         pass
     
+    def sync_selections_to_parent(self):
+        """Sync selections from LinkScreen viewers back to parent app viewers"""
+        if not self.parent_app:
+            return
+            
+        # Sync viewer1 selections
+        if hasattr(self, 'viewer1') and hasattr(self.parent_app, 'viewer1'):
+            # Clear any existing selections in parent viewer1
+            if hasattr(self.parent_app.viewer1, 'page_widgets'):
+                for page_widget in self.parent_app.viewer1.page_widgets:
+                    if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                        page_widget.selected_rect.deselect()
+                        page_widget.selected_rect = None
+                        page_widget.viewport().update()
+            
+            # Apply selections from LinkScreen viewer1 to parent viewer1
+            if hasattr(self.viewer1, 'page_widgets'):
+                for i, link_page in enumerate(self.viewer1.page_widgets):
+                    if hasattr(link_page, 'selected_rect') and link_page.selected_rect and i < len(self.parent_app.viewer1.page_widgets):
+                        parent_page = self.parent_app.viewer1.page_widgets[i]
+                        # Find the corresponding annotation in parent page
+                        for parent_ann in parent_page.annotations:
+                            # Compare positions to find matching annotation
+                            if (abs(parent_ann.rect().x() - link_page.selected_rect.rect().x()) < 5 and
+                                abs(parent_ann.rect().y() - link_page.selected_rect.rect().y()) < 5):
+                                parent_page.selected_rect = parent_ann
+                                parent_ann.select()
+                                parent_page.viewport().update()
+                                break
+        
+        # Sync viewer2 selections
+        if hasattr(self, 'viewer2') and hasattr(self.parent_app, 'viewer2'):
+            # Clear any existing selections in parent viewer2
+            if hasattr(self.parent_app.viewer2, 'page_widgets'):
+                for page_widget in self.parent_app.viewer2.page_widgets:
+                    if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                        page_widget.selected_rect.deselect()
+                        page_widget.selected_rect = None
+                        page_widget.viewport().update()
+            
+            # Apply selections from LinkScreen viewer2 to parent viewer2
+            if hasattr(self.viewer2, 'page_widgets'):
+                for i, link_page in enumerate(self.viewer2.page_widgets):
+                    if hasattr(link_page, 'selected_rect') and link_page.selected_rect and i < len(self.parent_app.viewer2.page_widgets):
+                        parent_page = self.parent_app.viewer2.page_widgets[i]
+                        # Find the corresponding annotation in parent page
+                        for parent_ann in parent_page.annotations:
+                            # Compare positions to find matching annotation
+                            if (abs(parent_ann.rect().x() - link_page.selected_rect.rect().x()) < 5 and
+                                abs(parent_ann.rect().y() - link_page.selected_rect.rect().y()) < 5):
+                                parent_page.selected_rect = parent_ann
+                                parent_ann.select()
+                                parent_page.viewport().update()
+                                break
+    
     def update_mark_stem_button_state(self):
         """Update the state of the Mark selection as Stem button based on current selection"""
         if not self.parent_app:
             return
             
-        # Check if there's a selection in the Question PDF (viewer1)
+        # Check if there's a selection in the Question PDF (viewer1) - check both LinkScreen and parent app viewers
         question_selection = None
-        if hasattr(self.parent_app, 'viewer1') and hasattr(self.parent_app.viewer1, 'page_widgets'):
+        
+        # First check LinkScreen viewers (current screen)
+        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                    question_selection = page_widget.selected_rect
+                    break
+        
+        # If no selection in LinkScreen, check parent app viewers
+        if not question_selection and hasattr(self.parent_app, 'viewer1') and hasattr(self.parent_app.viewer1, 'page_widgets'):
             for page_widget in self.parent_app.viewer1.page_widgets:
                 if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
                     question_selection = page_widget.selected_rect
                     break
         
-        # Check if there's a selection in the Answer PDF (viewer2)
+        # Check if there's a selection in the Answer PDF (viewer2) - check both LinkScreen and parent app viewers
         answer_selection = None
-        if hasattr(self.parent_app, 'viewer2') and hasattr(self.parent_app.viewer2, 'page_widgets'):
+        
+        # First check LinkScreen viewers (current screen)
+        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
+            for page_widget in self.viewer2.page_widgets:
+                if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                    answer_selection = page_widget.selected_rect
+                    break
+        
+        # If no selection in LinkScreen, check parent app viewers
+        if not answer_selection and hasattr(self.parent_app, 'viewer2') and hasattr(self.parent_app.viewer2, 'page_widgets'):
             for page_widget in self.parent_app.viewer2.page_widgets:
                 if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
                     answer_selection = page_widget.selected_rect
                     break
         
-        # Enable button only if there's a selection in Question PDF and no selection in Answer PDF
+        # Update button state, styling, and tooltip based on selection conditions
         if question_selection and not answer_selection:
+            # All conditions met - button is active and purple
             self.mark_stem_btn.setEnabled(True)
-        else:
+            self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; } QPushButton:enabled { background-color: #8a2be2; }")
+            self.mark_stem_btn.setToolTip("Mark Selection as Stem is active! ✓ Question PDF has selection ✓ Answer PDF has no selection")
+        elif question_selection and answer_selection:
+            # Question PDF has selection but Answer PDF also has selection
             self.mark_stem_btn.setEnabled(False)
+            self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+            self.mark_stem_btn.setToolTip("Don't select selection in Answer PDF - Clear the Answer PDF selection first")
+        elif not question_selection:
+            # No selection in Question PDF
+            self.mark_stem_btn.setEnabled(False)
+            self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+            self.mark_stem_btn.setToolTip("Select a Selection in Question PDF")
+        else:
+            # Fallback case
+            self.mark_stem_btn.setEnabled(False)
+            self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+            self.mark_stem_btn.setToolTip("No selection in Question PDF")
     
     def manual_save_pair(self):
         """Manually save the current PDF pair with annotations"""
@@ -2066,3 +2160,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
