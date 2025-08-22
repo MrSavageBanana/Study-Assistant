@@ -912,16 +912,12 @@ class LinkScreen(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
         
-        # Top toolbar with only Home and Back buttons
+        # Top toolbar with only Home button
         toolbar = QHBoxLayout()
         
         self.home_btn = QPushButton("🏠 Home")
         self.home_btn.clicked.connect(self.go_to_home)
         toolbar.addWidget(self.home_btn)
-        
-        self.back_btn = QPushButton("← Back to Selection Editor")
-        self.back_btn.clicked.connect(self.go_back_to_selection)
-        toolbar.addWidget(self.back_btn)
         
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -958,18 +954,6 @@ class LinkScreen(QWidget):
         self.back_to_selection_btn.setStyleSheet("QPushButton { background-color: #0078d4; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #106ebe; }")
         self.back_to_selection_btn.clicked.connect(self.go_back_to_selection)
         side_layout.addWidget(self.back_to_selection_btn)
-        
-        # Save button (always visible, doesn't change)
-        self.save_btn = QPushButton("💾 Save")
-        self.save_btn.setFixedHeight(50)
-        self.save_btn.setStyleSheet("QPushButton { background-color: #28a745; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover { background-color: #218838; }")
-        self.save_btn.clicked.connect(self.save_from_link_mode)
-        side_layout.addWidget(self.save_btn)
-        
-        # Auto-save status (always visible, doesn't change)
-        self.autosave_label = QLabel("Auto-save: Ready")
-        self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
-        side_layout.addWidget(self.autosave_label)
         
         # Mark selection as Stem button
         self.mark_stem_btn = QPushButton("Mark selection as Stem")
@@ -1029,10 +1013,7 @@ class LinkScreen(QWidget):
             self.viewer2.show_toolbar()
             self.viewer2.hide_specific_buttons()
         
-        # Update auto-save status from parent app
-        if hasattr(self.parent_app, 'autosave_label'):
-            self.autosave_label.setText(self.parent_app.autosave_label.text())
-            self.autosave_label.setStyleSheet(self.parent_app.autosave_label.styleSheet())
+
         
         # Update the mark stem button state
         self.update_mark_stem_button_state()
@@ -1066,11 +1047,6 @@ class LinkScreen(QWidget):
             if hasattr(self.parent_app, 'viewer2'):
                 self.parent_app.viewer2.show_specific_buttons()
             self.parent_app.show_pdf_viewer()
-    
-    def save_from_link_mode(self):
-        """Save from link mode - delegates to parent app"""
-        if self.parent_app:
-            self.parent_app.manual_save_pair()
     
     def mark_selection_as_stem(self):
         """Mark the selected selection as stem (dummy function)"""
@@ -1418,6 +1394,8 @@ class DualPDFViewerApp(QMainWindow):
         self.link_btn.clicked.connect(self.show_link_screen)
         counter_layout.addWidget(self.link_btn)
         
+
+        
         self.third_pane.setLayout(counter_layout)
 
         pdf_layout.addWidget(self.viewer1)
@@ -1732,10 +1710,7 @@ class DualPDFViewerApp(QMainWindow):
         self.rebuild_annotation_lists()
         self.update_navigation_labels()
         
-        # Update link screen auto-save status if it exists
-        if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'autosave_label'):
-            self.link_screen.autosave_label.setText(self.autosave_label.text())
-            self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
+
 
     def perform_autosave(self):
         """Perform the actual auto-save operation"""
@@ -1790,32 +1765,17 @@ class DualPDFViewerApp(QMainWindow):
                 # Reset to "Ready" after 3 seconds
                 QTimer.singleShot(3000, self.reset_autosave_label)
             
-            # Update link screen auto-save status if it exists
-            if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'autosave_label'):
-                self.link_screen.autosave_label.setText(self.autosave_label.text())
-                self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
-            
         except Exception as e:
             print(f"Auto-save error: {e}")
             if not self.auto_teleport_mode:
                 self.autosave_label.setText("Auto-save: Error")
                 self.autosave_label.setStyleSheet("color: #f44336; font-size: 11px; padding: 2px 4px;")
-                
-                # Update link screen auto-save status if it exists
-                if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'autosave_label'):
-                    self.link_screen.autosave_label.setText(self.autosave_label.text())
-                    self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
 
     def reset_autosave_label(self):
         """Reset auto-save label to ready state"""
         if not self.has_unsaved_changes and not self.auto_teleport_mode:
             self.autosave_label.setText("Auto-save: Ready")
             self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
-            
-            # Update link screen auto-save status if it exists
-            if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'autosave_label'):
-                self.link_screen.autosave_label.setText(self.autosave_label.text())
-                self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
 
     def go_to_home(self):
         """Navigate to home screen with auto-save"""
@@ -1881,11 +1841,6 @@ class DualPDFViewerApp(QMainWindow):
         
         # Disable auto teleport mode when entering link mode
         self.disable_auto_teleport_mode()
-        
-        # Sync auto-save status
-        if hasattr(self.link_screen, 'autosave_label'):
-            self.link_screen.autosave_label.setText(self.autosave_label.text())
-            self.link_screen.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
         
         self.status_bar.showMessage("Link Mode - All rectangles are unlinked (red)")
 
