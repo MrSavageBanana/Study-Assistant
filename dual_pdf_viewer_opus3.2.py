@@ -912,12 +912,29 @@ class LinkScreen(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
         
-        # Top toolbar with only Home button
+        # Top toolbar with same elements as main app
         toolbar = QHBoxLayout()
         
         self.home_btn = QPushButton("🏠 Home")
         self.home_btn.clicked.connect(self.go_to_home)
         toolbar.addWidget(self.home_btn)
+        
+        self.save_btn = QPushButton("💾 Save")
+        self.save_btn.clicked.connect(self.manual_save_pair)
+        toolbar.addWidget(self.save_btn)
+        
+        # Auto Teleport toggle
+        self.teleport_mode_btn = QPushButton("🔓 Auto Teleport")
+        self.teleport_mode_btn.setCheckable(True)
+        self.teleport_mode_btn.setToolTip("Toggle Auto Teleport - Middle mouse click to switch between PDFs")
+        self.teleport_mode_btn.clicked.connect(self.toggle_auto_teleport_mode)
+        self.teleport_mode_btn.setStyleSheet("QPushButton:checked { background-color: #ff6b35; color: white; }")
+        toolbar.addWidget(self.teleport_mode_btn)
+        
+        # Auto-save status indicator
+        self.autosave_label = QLabel("Auto-save: Ready")
+        self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
+        toolbar.addWidget(self.autosave_label)
         
         toolbar.addStretch()
         layout.addLayout(toolbar)
@@ -937,6 +954,11 @@ class LinkScreen(QWidget):
         self.viewer2.setFixedWidth(640)
         self.viewer2.annotations_changed.connect(self.on_annotations_changed)
         self.viewer2.selection_changed.connect(self.on_selection_changed)
+        
+        # Connect annotation signals to parent app for auto-save functionality
+        if self.parent_app:
+            self.viewer1.annotations_changed.connect(self.parent_app.on_annotations_changed)
+            self.viewer2.annotations_changed.connect(self.parent_app.on_annotations_changed)
         
         # Third pane = side panel (320px)
         self.third_pane = QWidget()
@@ -1017,11 +1039,31 @@ class LinkScreen(QWidget):
         
         # Update the mark stem button state
         self.update_mark_stem_button_state()
+        
+        # Sync toolbar state with parent app
+        if self.parent_app:
+            # Sync auto-save label
+            if hasattr(self.parent_app, 'autosave_label'):
+                self.autosave_label.setText(self.parent_app.autosave_label.text())
+                self.autosave_label.setStyleSheet(self.parent_app.autosave_label.styleSheet())
+            
+            # Sync auto teleport button state
+            if hasattr(self.parent_app, 'teleport_mode_btn'):
+                self.teleport_mode_btn.setChecked(self.parent_app.teleport_mode_btn.isChecked())
+                if self.parent_app.teleport_mode_btn.isChecked():
+                    self.teleport_mode_btn.setText("🔒 Auto Teleport")
+                else:
+                    self.teleport_mode_btn.setText("🔓 Auto Teleport")
     
     def on_annotations_changed(self):
         """Handle annotation changes in link mode"""
         # Update the mark stem button state when annotations change
         self.update_mark_stem_button_state()
+        
+        # Sync auto-save label with parent app
+        if self.parent_app and hasattr(self.parent_app, 'autosave_label'):
+            self.autosave_label.setText(self.parent_app.autosave_label.text())
+            self.autosave_label.setStyleSheet(self.parent_app.autosave_label.styleSheet())
     
     def on_selection_changed(self):
         """Handle selection changes in link mode"""
@@ -1036,6 +1078,19 @@ class LinkScreen(QWidget):
                 self.parent_app.viewer1.show_specific_buttons()
             if hasattr(self.parent_app, 'viewer2'):
                 self.parent_app.viewer2.show_specific_buttons()
+            
+            # Sync the parent app's toolbar state before going home
+            if hasattr(self.parent_app, 'autosave_label'):
+                self.parent_app.autosave_label.setText(self.autosave_label.text())
+                self.parent_app.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
+            
+            if hasattr(self.parent_app, 'teleport_mode_btn'):
+                self.parent_app.teleport_mode_btn.setChecked(self.teleport_mode_btn.isChecked())
+                if self.teleport_mode_btn.isChecked():
+                    self.parent_app.teleport_mode_btn.setText("🔒 Auto Teleport")
+                else:
+                    self.parent_app.teleport_mode_btn.setText("🔓 Auto Teleport")
+            
             self.parent_app.show_home_screen()
     
     def go_back_to_selection(self):
@@ -1046,6 +1101,19 @@ class LinkScreen(QWidget):
                 self.parent_app.viewer1.show_specific_buttons()
             if hasattr(self.parent_app, 'viewer2'):
                 self.parent_app.viewer2.show_specific_buttons()
+            
+            # Sync the parent app's toolbar state before going back
+            if hasattr(self.parent_app, 'autosave_label'):
+                self.parent_app.autosave_label.setText(self.autosave_label.text())
+                self.parent_app.autosave_label.setStyleSheet(self.autosave_label.styleSheet())
+            
+            if hasattr(self.parent_app, 'teleport_mode_btn'):
+                self.parent_app.teleport_mode_btn.setChecked(self.teleport_mode_btn.isChecked())
+                if self.teleport_mode_btn.isChecked():
+                    self.parent_app.teleport_mode_btn.setText("🔒 Auto Teleport")
+                else:
+                    self.parent_app.teleport_mode_btn.setText("🔓 Auto Teleport")
+            
             self.parent_app.show_pdf_viewer()
     
     def mark_selection_as_stem(self):
@@ -1079,6 +1147,16 @@ class LinkScreen(QWidget):
             self.mark_stem_btn.setEnabled(True)
         else:
             self.mark_stem_btn.setEnabled(False)
+    
+    def manual_save_pair(self):
+        """Manually save the current PDF pair with annotations"""
+        if self.parent_app:
+            self.parent_app.manual_save_pair()
+    
+    def toggle_auto_teleport_mode(self):
+        """Toggle the auto teleport mode on/off"""
+        if self.parent_app:
+            self.parent_app.toggle_auto_teleport_mode()
 
 class DualPDFViewerApp(QMainWindow):
     def __init__(self):
