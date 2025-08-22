@@ -1103,6 +1103,8 @@ class LinkScreen(QWidget):
             # Sync selections from LinkScreen back to parent app viewers
             self.sync_selections_to_parent()
             
+            # Scroll positions will be synced after Selection Editor is shown
+            
             # Show the specific buttons again before going back
             if hasattr(self.parent_app, 'viewer1'):
                 self.parent_app.viewer1.show_specific_buttons()
@@ -1122,6 +1124,9 @@ class LinkScreen(QWidget):
                     self.parent_app.teleport_mode_btn.setText("🔓 Auto Teleport")
             
             self.parent_app.show_pdf_viewer()
+            
+            # Use a timer to sync scroll positions after the Selection Editor is fully shown
+            QTimer.singleShot(100, self.sync_scroll_positions_to_parent)
     
     def mark_selection_as_stem(self):
         """Mark the selected selection as stem (dummy function)"""
@@ -1182,6 +1187,23 @@ class LinkScreen(QWidget):
                                 parent_ann.select()
                                 parent_page.viewport().update()
                                 break
+    
+    def sync_scroll_positions_to_parent(self):
+        """Sync scroll positions from LinkScreen viewers back to parent app viewers"""
+        if not self.parent_app:
+            return
+            
+        # Sync viewer1 scroll position
+        if hasattr(self, 'viewer1') and hasattr(self.parent_app, 'viewer1'):
+            if hasattr(self.viewer1, 'scroll_area') and self.viewer1.scroll_area and hasattr(self.parent_app.viewer1, 'scroll_area'):
+                link_scroll = self.viewer1.scroll_area.verticalScrollBar().value()
+                self.parent_app.viewer1.scroll_area.verticalScrollBar().setValue(link_scroll)
+        
+        # Sync viewer2 scroll position
+        if hasattr(self, 'viewer2') and hasattr(self.parent_app, 'viewer2'):
+            if hasattr(self.viewer2, 'scroll_area') and self.viewer2.scroll_area and hasattr(self.parent_app.viewer2, 'scroll_area'):
+                link_scroll = self.viewer2.scroll_area.verticalScrollBar().value()
+                self.parent_app.viewer2.scroll_area.verticalScrollBar().setValue(link_scroll)
     
     def update_mark_stem_button_state(self):
         """Update the state of the Mark selection as Stem button based on current selection"""
