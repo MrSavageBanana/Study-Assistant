@@ -446,6 +446,8 @@ class PDFPage(QGraphicsView):
         for ann in self.annotations:
             self.scene.removeItem(ann)
         self.annotations.clear()
+        if self.selected_rect:
+            self.selected_rect.deselect()
         self.selected_rect = None
         self.emit_annotation_modified()  # Annotations cleared
 
@@ -488,6 +490,7 @@ class PDFViewer(QWidget):
     
     annotations_changed = pyqtSignal()  # Signal when any annotations change
     annotation_created = pyqtSignal()   # Signal when a new annotation is created (for lock mode)
+    pdf_loaded = pyqtSignal()          # Signal when PDF is loaded
 
     def __init__(self, viewer_id: str, annotation_color: QColor, parent=None):
         super().__init__(parent)
@@ -622,6 +625,17 @@ class PDFViewer(QWidget):
         
         # Reset page counter
         self.update_page_counter_label()
+        
+        # Emit signal to update annotation counter
+        self.annotations_changed.emit()
+        
+        # Reset navigation state
+        if hasattr(self, 'owner') and hasattr(self.owner, 'current_annotation_index'):
+            viewer_id = int(self.viewer_id)
+            self.owner.current_annotation_index[viewer_id] = 0
+            self.owner.all_annotations[viewer_id].clear()
+            if hasattr(self.owner, 'update_navigation_labels'):
+                self.owner.update_navigation_labels()
 
     def toggle_annotation(self):
         for w in self.page_widgets:
@@ -630,6 +644,7 @@ class PDFViewer(QWidget):
     def clear_annotations(self):
         for w in self.page_widgets:
             w.clear_annotations()
+        self.annotations_changed.emit()  # Emit signal when annotations are cleared
 
     def open_pdf(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -647,6 +662,7 @@ class PDFViewer(QWidget):
             self.open_btn.hide()
             self.show_toolbar()
             self.display_pages()
+            self.pdf_loaded.emit()  # Emit signal when PDF is loaded
         except Exception as e:
             print(f"Error loading PDF: {e}")
 
@@ -880,10 +896,17 @@ class DualPDFViewerApp(QMainWindow):
         self.auto_teleport_mode = False
         self.current_active_viewer = None  # Which viewer is currently active (1 or 2)
         
+        # Navigation tracking variables
+        self.current_annotation_index = {1: 0, 2: 0}  # Current annotation index for each viewer
+        self.all_annotations = {1: [], 2: []}  # List of all annotations for each viewer
+        
         self.init_ui()
         
         # Install event filter for middle mouse click
         QApplication.instance().installEventFilter(self)
+        
+        # Setup keyboard shortcuts for navigation
+        self.setup_keyboard_shortcuts()
         
         # Check if we should show home screen or viewer
         if self.has_valid_pairs():
@@ -961,6 +984,14 @@ class DualPDFViewerApp(QMainWindow):
         self.autosave_label.setText("Auto-save: Ready")
         self.autosave_label.setStyleSheet("color: #666; font-size: 11px; padding: 2px 4px;")
         
+        # Reset annotation counter
+        self.update_annotation_counter()
+        
+        # Reset navigation state
+        self.current_annotation_index = {1: 0, 2: 0}
+        self.all_annotations = {1: [], 2: []}
+        self.update_navigation_labels()
+        
         self.status_bar.showMessage("New PDF Pair - Open PDFs in both viewers to start")
 
     def init_pdf_viewer(self):
@@ -1010,10 +1041,140 @@ class DualPDFViewerApp(QMainWindow):
         self.viewer2.annotations_changed.connect(self.on_annotations_changed)
         self.viewer2.annotation_created.connect(lambda: self.on_annotation_created(2))  # NEW
         
-        # Third pane = empty (320px)
+        # Connect annotation signals to update counter
+        self.viewer1.annotations_changed.connect(self.update_annotation_counter)
+        self.viewer2.annotations_changed.connect(self.update_annotation_counter)
+        
+        # Connect PDF loaded signals to update counter
+        self.viewer1.pdf_loaded.connect(self.update_annotation_counter)
+        self.viewer2.pdf_loaded.connect(self.update_annotation_counter)
+        
+        # Third pane = counter panel (320px)
         self.third_pane = QWidget()
         self.third_pane.setFixedWidth(320)
         self.third_pane.setStyleSheet("background-color: #1e1e1e; border-left: 1px solid #171717;")
+        
+        # Create counter layout
+        counter_layout = QVBoxLayout()
+        counter_layout.setContentsMargins(20, 20, 20, 20)
+        counter_layout.setSpacing(20)
+        
+        # Title
+        counter_title = QLabel("Annotation Count")
+        counter_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        counter_title.setStyleSheet("color: #ffffff; font-size: 18px; font-weight: bold;")
+        counter_layout.addWidget(counter_title)
+        
+        # Counter display
+        counter_display_layout = QHBoxLayout()
+        counter_display_layout.setSpacing(40)
+        
+        # Questions (Left PDF) counter
+        questions_layout = QVBoxLayout()
+        questions_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.questions_label = QLabel("Q")
+        self.questions_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.questions_label.setStyleSheet("color: #ffffff; font-size: 24px; font-weight: bold;")
+        questions_layout.addWidget(self.questions_label)
+        
+        self.questions_count = QLabel("0")
+        self.questions_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.questions_count.setStyleSheet("color: #4a9eff; font-size: 32px; font-weight: bold;")
+        questions_layout.addWidget(self.questions_count)
+        
+        counter_display_layout.addLayout(questions_layout)
+        
+        # Separator
+        separator = QLabel("|")
+        separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        separator.setStyleSheet("color: #666666; font-size: 24px; font-weight: bold;")
+        counter_display_layout.addWidget(separator)
+        
+        # Answers (Right PDF) counter
+        answers_layout = QVBoxLayout()
+        answers_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.answers_label = QLabel("A")
+        self.answers_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.answers_label.setStyleSheet("color: #ffffff; font-size: 24px; font-weight: bold;")
+        answers_layout.addWidget(self.answers_label)
+        
+        self.answers_count = QLabel("0")
+        self.answers_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.answers_count.setStyleSheet("color: #ffa500; font-size: 32px; font-weight: bold;")
+        answers_layout.addWidget(self.answers_count)
+        
+        counter_display_layout.addLayout(answers_layout)
+        
+        counter_layout.addLayout(counter_display_layout)
+        
+        # Add some spacing
+        counter_layout.addStretch()
+        
+        # Navigation controls
+        navigation_layout = QVBoxLayout()
+        navigation_layout.setSpacing(10)
+        
+        # Questions navigation
+        questions_nav_layout = QHBoxLayout()
+        questions_nav_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.questions_prev_btn = QPushButton("◀")
+        self.questions_prev_btn.setFixedSize(30, 30)
+        self.questions_prev_btn.setStyleSheet("QPushButton { background-color: #4a9eff; color: white; border: none; border-radius: 15px; font-size: 14px; } QPushButton:hover { background-color: #3a8eef; } QPushButton:disabled { background-color: #666; }")
+        self.questions_prev_btn.clicked.connect(lambda: self.navigate_annotations(1, -1))
+        self.questions_prev_btn.setToolTip("Previous Question (Ctrl+Shift+Left)")
+        questions_nav_layout.addWidget(self.questions_prev_btn)
+        
+        self.questions_nav_label = QLabel("0/0")
+        self.questions_nav_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.questions_nav_label.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: bold; min-width: 40px;")
+        questions_nav_layout.addWidget(self.questions_nav_label)
+        
+        self.questions_next_btn = QPushButton("▶")
+        self.questions_next_btn.setFixedSize(30, 30)
+        self.questions_next_btn.setStyleSheet("QPushButton { background-color: #4a9eff; color: white; border: none; border-radius: 15px; font-size: 14px; } QPushButton:hover { background-color: #3a8eef; } QPushButton:disabled { background-color: #666; }")
+        self.questions_next_btn.clicked.connect(lambda: self.navigate_annotations(1, 1))
+        self.questions_next_btn.setToolTip("Next Question (Ctrl+Shift+Right)")
+        questions_nav_layout.addWidget(self.questions_next_btn)
+        
+        navigation_layout.addLayout(questions_nav_layout)
+        
+        # Separator
+        nav_separator = QLabel("|")
+        nav_separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        nav_separator.setStyleSheet("color: #666666; font-size: 18px; font-weight: bold;")
+        navigation_layout.addWidget(nav_separator)
+        
+        # Answers navigation
+        answers_nav_layout = QHBoxLayout()
+        answers_nav_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.answers_prev_btn = QPushButton("◀")
+        self.answers_prev_btn.setFixedSize(30, 30)
+        self.answers_prev_btn.setStyleSheet("QPushButton { background-color: #ffa500; color: white; border: none; border-radius: 15px; font-size: 14px; } QPushButton:hover { background-color: #ff9500; } QPushButton:disabled { background-color: #666; }")
+        self.answers_prev_btn.clicked.connect(lambda: self.navigate_annotations(2, -1))
+        self.answers_prev_btn.setToolTip("Previous Answer (Ctrl+Alt+Left)")
+        answers_nav_layout.addWidget(self.answers_prev_btn)
+        
+        self.answers_nav_label = QLabel("0/0")
+        self.answers_nav_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.answers_nav_label.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: bold; min-width: 40px;")
+        answers_nav_layout.addWidget(self.answers_nav_label)
+        
+        self.answers_next_btn = QPushButton("▶")
+        self.answers_next_btn.setFixedSize(30, 30)
+        self.answers_next_btn.setStyleSheet("QPushButton { background-color: #ffa500; color: white; border: none; border-radius: 15px; font-size: 14px; } QPushButton:hover { background-color: #ff9500; } QPushButton:disabled { background-color: #666; }")
+        self.answers_next_btn.clicked.connect(lambda: self.navigate_annotations(2, 1))
+        self.answers_next_btn.setToolTip("Next Answer (Ctrl+Alt+Right)")
+        answers_nav_layout.addWidget(self.answers_next_btn)
+        
+        navigation_layout.addLayout(answers_nav_layout)
+        
+        counter_layout.addLayout(navigation_layout)
+        
+        self.third_pane.setLayout(counter_layout)
 
         pdf_layout.addWidget(self.viewer1)
         pdf_layout.addWidget(self.viewer2)
@@ -1021,6 +1182,24 @@ class DualPDFViewerApp(QMainWindow):
         
         layout.addLayout(pdf_layout)
         self.viewer_widget.setLayout(layout)
+
+    def setup_keyboard_shortcuts(self):
+        """Setup keyboard shortcuts for navigation"""
+        from PyQt6.QtGui import QShortcut, QKeySequence
+        
+        # Left PDF navigation (Questions)
+        self.questions_prev_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Left"), self)
+        self.questions_prev_shortcut.activated.connect(lambda: self.navigate_annotations(1, -1))
+        
+        self.questions_next_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Right"), self)
+        self.questions_next_shortcut.activated.connect(lambda: self.navigate_annotations(1, 1))
+        
+        # Right PDF navigation (Answers)
+        self.answers_prev_shortcut = QShortcut(QKeySequence("Ctrl+Alt+Left"), self)
+        self.answers_prev_shortcut.activated.connect(lambda: self.navigate_annotations(2, -1))
+        
+        self.answers_next_shortcut = QShortcut(QKeySequence("Ctrl+Alt+Right"), self)
+        self.answers_next_shortcut.activated.connect(lambda: self.navigate_annotations(2, 1))
 
     def toggle_auto_teleport_mode(self):
         """Toggle the auto teleport mode on/off"""
@@ -1094,6 +1273,137 @@ class DualPDFViewerApp(QMainWindow):
         message = f"🔒 AUTO TELEPORT: Active in {viewer_name} | Middle click to switch"
         self.status_bar.showMessage(message)
 
+    def update_annotation_counter(self):
+        """Update the annotation counter display"""
+        # Count annotations in left PDF (Questions)
+        left_count = 0
+        if hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                left_count += len(page_widget.annotations)
+        
+        # Count annotations in right PDF (Answers)
+        right_count = 0
+        if hasattr(self.viewer2, 'page_widgets'):
+            for page_widget in self.viewer2.page_widgets:
+                right_count += len(page_widget.annotations)
+        
+        # Update the counter labels
+        self.questions_count.setText(str(left_count))
+        self.answers_count.setText(str(right_count))
+        
+        # Update navigation labels and rebuild annotation lists
+        self.update_navigation_labels()
+        self.rebuild_annotation_lists()
+
+    def navigate_annotations(self, viewer_id, direction):
+        """Navigate to next/previous annotation in the specified viewer"""
+        if not self.all_annotations[viewer_id]:
+            return
+            
+        # Update current index
+        current_idx = self.current_annotation_index[viewer_id]
+        total_annotations = len(self.all_annotations[viewer_id])
+        
+        if direction == 1:  # Next
+            new_idx = (current_idx + 1) % total_annotations
+        else:  # Previous
+            new_idx = (current_idx - 1) % total_annotations
+            
+        self.current_annotation_index[viewer_id] = new_idx
+        
+        # Navigate to the annotation
+        self.go_to_annotation(viewer_id, new_idx)
+        
+        # Update navigation labels
+        self.update_navigation_labels()
+
+    def go_to_annotation(self, viewer_id, annotation_index):
+        """Go to a specific annotation and highlight it"""
+        if not self.all_annotations[viewer_id] or annotation_index >= len(self.all_annotations[viewer_id]):
+            return
+            
+        viewer = self.viewer1 if viewer_id == 1 else self.viewer2
+        annotation_info = self.all_annotations[viewer_id][annotation_index]
+        
+        # Clear previous highlights
+        self.clear_all_highlights(viewer_id)
+        
+        # Go to the page with this annotation
+        target_page = annotation_info['page_index']
+        if target_page < len(viewer.page_widgets):
+            # Scroll to the page
+            page_widget = viewer.page_widgets[target_page]
+            viewer.scroll_area.ensureWidgetVisible(page_widget)
+            
+            # Highlight the annotation
+            annotation_item = annotation_info['annotation']
+            if annotation_item:
+                # Select and highlight the annotation
+                page_widget.selected_rect = annotation_item
+                annotation_item.select()
+                
+                # Update the page widget
+                page_widget.viewport().update()
+
+    def clear_all_highlights(self, viewer_id):
+        """Clear all highlights in the specified viewer"""
+        viewer = self.viewer1 if viewer_id == 1 else self.viewer2
+        if hasattr(viewer, 'page_widgets'):
+            for page_widget in viewer.page_widgets:
+                if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                    page_widget.selected_rect.deselect()
+                    page_widget.selected_rect = None
+                for annotation in page_widget.annotations:
+                    annotation.deselect()
+                page_widget.viewport().update()
+
+    def rebuild_annotation_lists(self):
+        """Rebuild the list of all annotations for navigation"""
+        # Clear existing lists
+        self.all_annotations[1].clear()
+        self.all_annotations[2].clear()
+        
+        # Rebuild for viewer 1 (Questions)
+        if hasattr(self.viewer1, 'page_widgets'):
+            for page_index, page_widget in enumerate(self.viewer1.page_widgets):
+                for annotation in page_widget.annotations:
+                    self.all_annotations[1].append({
+                        'page_index': page_index,
+                        'annotation': annotation
+                    })
+        
+        # Rebuild for viewer 2 (Answers)
+        if hasattr(self.viewer2, 'page_widgets'):
+            for page_index, page_widget in enumerate(self.viewer2.page_widgets):
+                for annotation in page_widget.annotations:
+                    self.all_annotations[2].append({
+                        'page_index': page_index,
+                        'annotation': annotation
+                    })
+        
+        # Reset current indices if they're out of bounds
+        for viewer_id in [1, 2]:
+            if self.current_annotation_index[viewer_id] >= len(self.all_annotations[viewer_id]):
+                self.current_annotation_index[viewer_id] = 0
+
+    def update_navigation_labels(self):
+        """Update the navigation labels with current counts"""
+        # Update Questions navigation
+        left_count = len(self.all_annotations[1])
+        current_left = self.current_annotation_index[1] + 1 if left_count > 0 else 0
+        self.questions_nav_label.setText(f"{current_left}/{left_count}")
+        
+        # Update Answers navigation
+        right_count = len(self.all_annotations[2])
+        current_right = self.current_annotation_index[2] + 1 if right_count > 0 else 0
+        self.answers_nav_label.setText(f"{current_right}/{right_count}")
+        
+        # Update button states
+        self.questions_prev_btn.setEnabled(left_count > 0)
+        self.questions_next_btn.setEnabled(left_count > 0)
+        self.answers_prev_btn.setEnabled(right_count > 0)
+        self.answers_next_btn.setEnabled(right_count > 0)
+
     def on_annotation_created(self, viewer_id):
         pass  # Removed
 
@@ -1134,6 +1444,10 @@ class DualPDFViewerApp(QMainWindow):
             # Restart the timer - this debounces rapid changes
             self.autosave_timer.stop()
             self.autosave_timer.start(1000)  # Wait 1 second after last change
+        
+        # Rebuild annotation lists for navigation
+        self.rebuild_annotation_lists()
+        self.update_navigation_labels()
 
     def perform_autosave(self):
         """Perform the actual auto-save operation"""
@@ -1275,6 +1589,13 @@ class DualPDFViewerApp(QMainWindow):
             self.current_pair_name = pair_data.get('name', '')
             self.current_pair_description = pair_data.get('description', '')
             self.has_unsaved_changes = False
+            
+            # Update annotation counter after loading
+            self.update_annotation_counter()
+            
+            # Also update navigation
+            self.rebuild_annotation_lists()
+            self.update_navigation_labels()
             
             name = pair_data.get('name', 'Unknown')
             self.status_bar.showMessage(f"Loaded pair: {name}")
