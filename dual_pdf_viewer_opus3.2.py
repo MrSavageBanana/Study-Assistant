@@ -212,6 +212,10 @@ class PDFPage(QGraphicsView):
                 annotation.selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
                 annotation.page_index = self.index
             
+            # Clear any pending link flags when loading annotations
+            if hasattr(annotation, 'is_pending_link'):
+                annotation.is_pending_link = False
+            
             self.scene.addItem(annotation)
             self.annotations.append(annotation)
 
@@ -448,6 +452,10 @@ class PDFPage(QGraphicsView):
                 self.temp_rect.selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
                 self.temp_rect.page_index = self.index
                 
+                # Clear any pending link flags for new annotations
+                if hasattr(self.temp_rect, 'is_pending_link'):
+                    self.temp_rect.is_pending_link = False
+                
                 self.annotations.append(self.temp_rect)
                 if self.selected_rect:
                     self.selected_rect.deselect()
@@ -596,36 +604,8 @@ class PDFPage(QGraphicsView):
                     app.status_bar.showMessage(f"Selection ID {selection_id} not found in current pair", 3000)
                 return
             
-            # Selection ID is valid, now store it in links.json
-            links_file = "links.json"
-            links_data = {}
-            
-            # Load existing links if file exists
-            if os.path.exists(links_file):
-                try:
-                    with open(links_file, 'r') as f:
-                        links_data = json.load(f)
-                except:
-                    links_data = {}
-            
-            # Initialize structure if needed
-            if 'links' not in links_data:
-                links_data['links'] = {}
-            
-            # Create or update the link entry
-            link_key = f"{app.current_pair_id}_{selection_id}"
-            links_data['links'][link_key] = {
-                'pair_id': app.current_pair_id,
-                'selection_id': selection_id,
-                'viewer_id': viewer_id,
-                'page_index': page_index,
-                'captured_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-                'status': 'captured'
-            }
-            
-            # Save to links.json
-            with open(links_file, 'w') as f:
-                json.dump(links_data, f, indent=2)
+            # Selection ID is valid, now mark it as pending in memory only
+            selected_rect.is_pending_link = True
             
             # Provide visual feedback - change rectangle from blue/orange to yellow
             selected_rect.set_linked_highlight(True)
@@ -635,9 +615,9 @@ class PDFPage(QGraphicsView):
             
             # Show status message
             if hasattr(app, 'status_bar'):
-                app.status_bar.showMessage(f"Selection ID {selection_id} captured and stored in links.json", 3000)
+                app.status_bar.showMessage(f"Selection ID {selection_id} captured - pending link", 3000)
             
-            print(f"Selection ID {selection_id} successfully captured and stored in links.json")
+            print(f"Selection ID {selection_id} successfully captured - pending link")
             
         except Exception as e:
             print(f"Error capturing Selection ID: {e}")
@@ -647,6 +627,9 @@ class PDFPage(QGraphicsView):
     
     def clear_annotations(self):
         for ann in self.annotations:
+            # Clear pending link flag if it exists
+            if hasattr(ann, 'is_pending_link'):
+                ann.is_pending_link = False
             self.scene.removeItem(ann)
         self.annotations.clear()
         if self.selected_rect:
@@ -913,6 +896,10 @@ class PDFViewer(QWidget):
             for annotation in w.annotations:
                 if hasattr(annotation, 'is_linked') and annotation.is_linked:
                     annotation.set_linked_highlight(False)
+                # Also clear pending links (yellow highlighting)
+                if hasattr(annotation, 'is_pending_link') and annotation.is_pending_link:
+                    annotation.set_linked_highlight(False)
+                    annotation.is_pending_link = False
             w.viewport().update()
     
     def restore_linked_highlighting(self):
@@ -1585,36 +1572,8 @@ class LinkScreen(QWidget):
                 print(f"Selection ID {selection_id} not found in pdf_pairs.json")
                 return
             
-            # Selection ID is valid, now store it in links.json
-            links_file = "links.json"
-            links_data = {}
-            
-            # Load existing links if file exists
-            if os.path.exists(links_file):
-                try:
-                    with open(links_file, 'r') as f:
-                        links_data = json.load(f)
-                except:
-                    links_data = {}
-            
-            # Initialize structure if needed
-            if 'links' not in links_data:
-                links_data['links'] = {}
-            
-            # Create or update the link entry
-            link_key = f"{self.parent_app.current_pair_id}_{selection_id}"
-            links_data['links'][link_key] = {
-                'pair_id': self.parent_app.current_pair_id,
-                'selection_id': selection_id,
-                'viewer_id': viewer_id,
-                'page_index': page_index,
-                'captured_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-                'status': 'captured'
-            }
-            
-            # Save to links.json
-            with open(links_file, 'w') as f:
-                json.dump(links_data, f, indent=2)
+            # Selection ID is valid, now mark it as pending in memory only
+            selected_rect.is_pending_link = True
             
             # Provide visual feedback - change rectangle from red to yellow
             selected_rect.set_linked_highlight(True)
@@ -1625,9 +1584,9 @@ class LinkScreen(QWidget):
             
             # Show status message
             if hasattr(self.parent_app, 'status_bar'):
-                self.parent_app.status_bar.showMessage(f"Selection ID {selection_id} captured and stored in links.json", 3000)
+                self.parent_app.status_bar.showMessage(f"Selection ID {selection_id} captured - pending link", 3000)
             
-            print(f"Selection ID {selection_id} successfully captured and stored in links.json")
+            print(f"Selection ID {selection_id} successfully captured - pending link")
             
         except Exception as e:
             print(f"Error capturing Selection ID: {e}")
@@ -1767,6 +1726,9 @@ class DualPDFViewerApp(QMainWindow):
         # Clear linked highlighting from both viewers
         self.viewer1.clear_linked_highlighting()
         self.viewer2.clear_linked_highlighting()
+        
+        # Clear all pending links (yellow highlighting)
+        self.clear_all_pending_links()
         
         # Reset auto teleport mode
         self.disable_auto_teleport_mode()
@@ -2402,6 +2364,9 @@ class DualPDFViewerApp(QMainWindow):
         if hasattr(self, 'viewer2'):
             self.viewer2.clear_linked_highlighting()
         
+        # Clear all pending links (yellow highlighting)
+        self.clear_all_pending_links()
+        
         # Clear the main layout
         while self.main_layout.count():
             item = self.main_layout.takeAt(0)
@@ -2411,7 +2376,7 @@ class DualPDFViewerApp(QMainWindow):
         # Add home screen
         self.main_layout.addWidget(self.home_screen)
         self.home_screen.load_pairs()  # Refresh pairs list
-        self.status_bar.showMessage("Home - Select a PDF pair or create a new one")
+        self.status_bar.showMessage("Home - Select a PDF pair or create a pair")
 
     def show_pdf_viewer(self):
         """Show the PDF viewer"""
@@ -2488,6 +2453,9 @@ class DualPDFViewerApp(QMainWindow):
             # Clear any existing linked highlighting
             self.viewer1.clear_linked_highlighting()
             self.viewer2.clear_linked_highlighting()
+            
+            # Clear all pending links (yellow highlighting)
+            self.clear_all_pending_links()
             
             # Make sure specific buttons are visible
             self.viewer1.show_specific_buttons()
@@ -2580,6 +2548,24 @@ class DualPDFViewerApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, 'Save Error', f'Failed to save PDF pair: {e}')
 
+    def clear_all_pending_links(self):
+        """Clear all pending links (yellow highlighting) from both viewers"""
+        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                for annotation in page_widget.annotations:
+                    if hasattr(annotation, 'is_pending_link') and annotation.is_pending_link:
+                        annotation.set_linked_highlight(False)
+                        annotation.is_pending_link = False
+                page_widget.viewport().update()
+        
+        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
+            for page_widget in self.viewer2.page_widgets:
+                for annotation in page_widget.annotations:
+                    if hasattr(annotation, 'is_pending_link') and annotation.is_pending_link:
+                        annotation.set_linked_highlight(False)
+                        annotation.is_pending_link = False
+                page_widget.viewport().update()
+
     def closeEvent(self, event: QCloseEvent):
         """Handle application close event with auto-save"""
         self.is_closing = True
@@ -2592,6 +2578,9 @@ class DualPDFViewerApp(QMainWindow):
             self.viewer1.clear_linked_highlighting()
         if hasattr(self, 'viewer2'):
             self.viewer2.clear_linked_highlighting()
+        
+        # Clear all pending links (yellow highlighting)
+        self.clear_all_pending_links()
         
         # Perform final auto-save if needed
         if self.has_unsaved_changes and self.current_pair_id:
