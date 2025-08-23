@@ -101,9 +101,6 @@ class SelectableRect(QGraphicsRectItem):
             self.is_linked = False
             self.setPen(self.original_pen)
             self.setBrush(self.original_brush)
-            # Clear the main viewer linked flag
-            if hasattr(self, 'was_linked_in_main_viewer'):
-                self.was_linked_in_main_viewer = False
         
     def setRect(self, rect):
         super().setRect(rect)
@@ -214,10 +211,6 @@ class PDFPage(QGraphicsView):
                 rel_height = coords['height']
                 annotation.selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
                 annotation.page_index = self.index
-            
-            # Clear any main viewer linked flags when loading annotations
-            if hasattr(annotation, 'was_linked_in_main_viewer'):
-                annotation.was_linked_in_main_viewer = False
             
             self.scene.addItem(annotation)
             self.annotations.append(annotation)
@@ -455,10 +448,6 @@ class PDFPage(QGraphicsView):
                 self.temp_rect.selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
                 self.temp_rect.page_index = self.index
                 
-                # Clear any main viewer linked flags for new annotations
-                if hasattr(self.temp_rect, 'was_linked_in_main_viewer'):
-                    self.temp_rect.was_linked_in_main_viewer = False
-                
                 self.annotations.append(self.temp_rect)
                 if self.selected_rect:
                     self.selected_rect.deselect()
@@ -644,9 +633,6 @@ class PDFPage(QGraphicsView):
             # Update the viewport to show the change
             self.viewport().update()
             
-            # Store the linked state in the annotation for later restoration
-            selected_rect.was_linked_in_main_viewer = True
-            
             # Show status message
             if hasattr(app, 'status_bar'):
                 app.status_bar.showMessage(f"Selection ID {selection_id} captured and stored in links.json", 3000)
@@ -661,9 +647,6 @@ class PDFPage(QGraphicsView):
     
     def clear_annotations(self):
         for ann in self.annotations:
-            # Clear linked highlighting flags
-            if hasattr(ann, 'was_linked_in_main_viewer'):
-                ann.was_linked_in_main_viewer = False
             self.scene.removeItem(ann)
         self.annotations.clear()
         if self.selected_rect:
@@ -735,10 +718,8 @@ class PDFPage(QGraphicsView):
     
     def restore_linked_highlighting(self):
         """Restore linked highlighting for annotations that were linked in main viewer"""
-        for annotation in self.annotations:
-            if hasattr(annotation, 'was_linked_in_main_viewer') and annotation.was_linked_in_main_viewer:
-                annotation.set_linked_highlight(True)
-        self.viewport().update()
+        # No longer needed - yellow highlighting is temporary only
+        pass
 
 class PDFViewer(QWidget):
     """Single PDF viewer widget with rectangle annotation and per-page/global rotation"""
@@ -936,8 +917,8 @@ class PDFViewer(QWidget):
     
     def restore_linked_highlighting(self):
         """Restore linked highlighting for annotations that were linked in main viewer"""
-        for w in self.page_widgets:
-            w.restore_linked_highlighting()
+        # No longer needed - yellow highlighting is temporary only
+        pass
 
     def open_pdf(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1324,9 +1305,6 @@ class LinkScreen(QWidget):
         # Use a timer to restore scroll positions after pages are fully rendered
         QTimer.singleShot(100, self.restore_scroll_positions)
         
-        # Load linked rectangles from links.json
-        self.load_linked_rectangles()
-        
         # Update the mark stem button state and set initial tooltip
         self.update_mark_stem_button_state()
         
@@ -1363,9 +1341,6 @@ class LinkScreen(QWidget):
     def go_to_home(self):
         """Navigate to home screen"""
         if self.parent_app:
-            # Restore original appearance of linked rectangles before going home
-            self.restore_linked_rectangles_appearance()
-            
             # Show the specific buttons again before going home
             if hasattr(self.parent_app, 'viewer1'):
                 self.parent_app.viewer1.show_specific_buttons()
@@ -1389,9 +1364,6 @@ class LinkScreen(QWidget):
     def go_back_to_selection(self):
         """Go back to the main selection editor"""
         if self.parent_app:
-            # Restore original appearance of linked rectangles before syncing
-            self.restore_linked_rectangles_appearance()
-            
             # Sync selections from LinkScreen back to parent app viewers
             self.sync_selections_to_parent()
             
@@ -1419,24 +1391,6 @@ class LinkScreen(QWidget):
             
             # Use a timer to sync scroll positions after the Selection Editor is fully shown
             QTimer.singleShot(100, self.sync_scroll_positions_to_parent)
-    
-    def restore_linked_rectangles_appearance(self):
-        """Restore the original appearance of all linked rectangles"""
-        # Restore viewer1 rectangles
-        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
-            for page_widget in self.viewer1.page_widgets:
-                for annotation in page_widget.annotations:
-                    if hasattr(annotation, 'is_linked') and annotation.is_linked:
-                        annotation.set_linked_highlight(False)
-                page_widget.viewport().update()
-        
-        # Restore viewer2 rectangles
-        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
-            for page_widget in self.viewer2.page_widgets:
-                for annotation in page_widget.annotations:
-                    if hasattr(annotation, 'is_linked') and annotation.is_linked:
-                        annotation.set_linked_highlight(False)
-                page_widget.viewport().update()
     
     def mark_selection_as_stem(self):
         """Mark the selected selection as stem (dummy function)"""
@@ -1710,51 +1664,6 @@ class LinkScreen(QWidget):
         # Clear the pending scroll positions
         self.pending_scroll_positions.clear()
     
-    def load_linked_rectangles(self):
-        """Load and highlight rectangles that are already linked in links.json"""
-        if not self.parent_app or not hasattr(self.parent_app, 'current_pair_id'):
-            return
-            
-        links_file = "links.json"
-        if not os.path.exists(links_file):
-            return
-            
-        try:
-            with open(links_file, 'r') as f:
-                links_data = json.load(f)
-            
-            links = links_data.get('links', {})
-            current_pair_id = self.parent_app.current_pair_id
-            
-            # Find all links for the current pair
-            for link_key, link_info in links.items():
-                if link_info.get('pair_id') == current_pair_id:
-                    selection_id = link_info.get('selection_id')
-                    viewer_id = link_info.get('viewer_id')
-                    
-                    if not selection_id or not viewer_id:
-                        continue
-                    
-                    # Find the corresponding viewer
-                    viewer = self.viewer1 if str(viewer_id) == "1" else self.viewer2
-                    if not viewer or not hasattr(viewer, 'page_widgets'):
-                        continue
-                    
-                    # Find the annotation with this selection ID
-                    for page_widget in viewer.page_widgets:
-                        for annotation in page_widget.annotations:
-                            if hasattr(annotation, 'selection_id') and annotation.selection_id == selection_id:
-                                # Highlight this rectangle as linked
-                                annotation.set_linked_highlight(True)
-                                page_widget.viewport().update()
-                                break
-                        else:
-                            continue
-                        break
-                        
-        except Exception as e:
-            print(f"Error loading linked rectangles: {e}")
-
 class DualPDFViewerApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2469,9 +2378,6 @@ class DualPDFViewerApp(QMainWindow):
 
     def go_to_home(self):
         """Navigate to home screen"""
-        # Restore original appearance of linked rectangles before going home
-        self.restore_linked_rectangles_appearance()
-        
         # Show the specific buttons again before going home
         if hasattr(self, 'viewer1'):
             self.viewer1.show_specific_buttons()
@@ -2480,24 +2386,6 @@ class DualPDFViewerApp(QMainWindow):
         
         # Show the home screen
         self.show_home_screen()
-    
-    def restore_linked_rectangles_appearance(self):
-        """Restore the original appearance of all linked rectangles"""
-        # Restore viewer1 rectangles
-        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
-            for page_widget in self.viewer1.page_widgets:
-                for annotation in page_widget.annotations:
-                    if hasattr(annotation, 'is_linked') and annotation.is_linked:
-                        annotation.set_linked_highlight(False)
-                page_widget.viewport().update()
-        
-        # Restore viewer2 rectangles
-        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
-            for page_widget in self.viewer2.page_widgets:
-                for annotation in page_widget.annotations:
-                    if hasattr(annotation, 'is_linked') and annotation.is_linked:
-                        annotation.set_linked_highlight(False)
-                page_widget.viewport().update()
     
     def show_home_screen(self):
         """Show the home screen"""
@@ -2541,12 +2429,6 @@ class DualPDFViewerApp(QMainWindow):
         
         # Add PDF viewer
         self.main_layout.addWidget(self.viewer_widget)
-        
-        # Restore linked highlighting for annotations that were linked in main viewer
-        if hasattr(self, 'viewer1'):
-            self.viewer1.restore_linked_highlighting()
-        if hasattr(self, 'viewer2'):
-            self.viewer2.restore_linked_highlighting()
         
         self.status_bar.showMessage("PDF Viewer - Open PDFs to start annotating")
 
@@ -2610,9 +2492,6 @@ class DualPDFViewerApp(QMainWindow):
             # Make sure specific buttons are visible
             self.viewer1.show_specific_buttons()
             self.viewer2.show_specific_buttons()
-            
-            # Load and restore linked highlighting from links.json
-            self.load_and_restore_linked_highlighting()
             
             # Store current pair info
             self.current_pair_id = pair_data.get('pair_id')
@@ -2700,52 +2579,6 @@ class DualPDFViewerApp(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, 'Save Error', f'Failed to save PDF pair: {e}')
-
-    def load_and_restore_linked_highlighting(self):
-        """Load and restore linked highlighting from links.json"""
-        if not self.current_pair_id:
-            return
-            
-        links_file = "links.json"
-        if not os.path.exists(links_file):
-            return
-            
-        try:
-            with open(links_file, 'r') as f:
-                links_data = json.load(f)
-            
-            links = links_data.get('links', {})
-            
-            # Find all links for the current pair
-            for link_key, link_info in links.items():
-                if link_info.get('pair_id') == self.current_pair_id:
-                    selection_id = link_info.get('selection_id')
-                    viewer_id = link_info.get('viewer_id')
-                    
-                    if not selection_id or not viewer_id:
-                        continue
-                    
-                    # Find the corresponding viewer
-                    viewer = self.viewer1 if str(viewer_id) == "1" else self.viewer2
-                    if not viewer or not hasattr(viewer, 'page_widgets'):
-                        continue
-                    
-                    # Find the annotation with this selection ID
-                    for page_widget in viewer.page_widgets:
-                        for annotation in page_widget.annotations:
-                            if hasattr(annotation, 'selection_id') and annotation.selection_id == selection_id:
-                                # Mark this annotation as linked in main viewer
-                                annotation.was_linked_in_main_viewer = True
-                                # Highlight this rectangle as linked
-                                annotation.set_linked_highlight(True)
-                                page_widget.viewport().update()
-                                break
-                        else:
-                            continue
-                        break
-                        
-        except Exception as e:
-            print(f"Error loading linked highlighting: {e}")
 
     def closeEvent(self, event: QCloseEvent):
         """Handle application close event with auto-save"""
