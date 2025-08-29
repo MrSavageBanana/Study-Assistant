@@ -114,21 +114,9 @@ class SelectableRect(QGraphicsRectItem):
                 pen = QPen(QColor(255, 0, 0), 3)
                 brush = QBrush(QColor(255, 0, 0, 80))
             elif state == "green":
-                # Green for linked to answer
+                # Green for linked
                 pen = QPen(QColor(0, 255, 0), 3)
                 brush = QBrush(QColor(0, 255, 0, 80))
-            elif state == "dark_red":
-                # Dark red for linked to stem only
-                pen = QPen(QColor(139, 0, 0), 3)
-                brush = QBrush(QColor(139, 0, 0, 80))
-            elif state == "dark_green":
-                # Dark green for linked to both stem and answer
-                pen = QPen(QColor(0, 100, 0), 3)
-                brush = QBrush(QColor(0, 100, 0, 80))
-            elif state == "magenta":
-                # Magenta for stem itself
-                pen = QPen(QColor(255, 0, 255), 3)
-                brush = QBrush(QColor(255, 0, 255, 80))
             else:
                 # Default to original
                 pen = self.original_pen
@@ -145,12 +133,6 @@ class SelectableRect(QGraphicsRectItem):
                 pen = QPen(QColor(255, 0, 0), 3)
             elif self.current_link_state == "green":
                 pen = QPen(QColor(0, 255, 0), 3)
-            elif self.current_link_state == "dark_red":
-                pen = QPen(QColor(139, 0, 0), 3)
-            elif self.current_link_state == "dark_green":
-                pen = QPen(QColor(0, 100, 0), 3)
-            elif self.current_link_state == "magenta":
-                pen = QPen(QColor(255, 0, 255), 3)
             else:
                 pen = self.selected_pen
             pen.setStyle(Qt.PenStyle.DashLine)
@@ -592,10 +574,6 @@ class PDFPage(QGraphicsView):
         # NEW: U key binding for unlinking
         elif event.key() == Qt.Key.Key_U:
             app.handle_u_key()
-        
-        # NEW: S key binding for stem operations
-        elif event.key() == Qt.Key.Key_S:
-            app.handle_s_key()
         
         # NEW: ESC key binding to cancel pending links
         elif event.key() == Qt.Key.Key_Escape and self.selected_rect:
@@ -1469,9 +1447,9 @@ class LinkScreen(QWidget):
             QTimer.singleShot(100, self.sync_scroll_positions_to_parent)
     
     def mark_selection_as_stem(self):
-        """Mark the selected selection as stem"""
-        if self.parent_app:
-            self.parent_app.handle_s_key()
+        """Mark the selected selection as stem (dummy function)"""
+        # This is a dummy function that does nothing when clicked
+        pass
     
     def sync_selections_to_parent(self):
         """Sync selections from LinkScreen viewers back to parent app viewers"""
@@ -1585,44 +1563,24 @@ class LinkScreen(QWidget):
                     break
         
         # Update button state, styling, and tooltip based on selection conditions
-        if self.parent_app and self.parent_app.current_stem_mode:
-            # In stem mode - show "Done" button
+        if question_selection and not answer_selection:
+            # All conditions met - button is active and purple
             self.mark_stem_btn.setEnabled(True)
-            self.mark_stem_btn.setText("Done (S)")
-            self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #dc3545; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #c82333; }")
-            self.mark_stem_btn.setToolTip("Finish stem mode")
-        elif question_selection and not answer_selection:
-            # Check if question is already linked to an answer
-            question_id = question_selection.selection_id
-            question_data = self.parent_app.links_data["questions"].get(question_id, {})
-            if question_data.get("answer") is not None:
-                # Question is already linked to an answer
-                self.mark_stem_btn.setEnabled(False)
-                self.mark_stem_btn.setText("Mark selection as Stem")
-                self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
-                self.mark_stem_btn.setToolTip("Cannot mark linked Question as Stem")
-            else:
-                # All conditions met - button is active
-                self.mark_stem_btn.setEnabled(True)
-                self.mark_stem_btn.setText("Mark selection as Stem")
-                self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; } QPushButton:enabled { background-color: #8a2be2; }")
-                self.mark_stem_btn.setToolTip("Mark Selection as Stem is active! ✓ Question PDF has selection ✓ Answer PDF has no selection ✓ Question is not linked")
+            self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; } QPushButton:enabled { background-color: #8a8a2be2; }")
+            self.mark_stem_btn.setToolTip("Mark Selection as Stem is active! ✓ Question PDF has selection ✓ Answer PDF has no selection")
         elif question_selection and answer_selection:
             # Question PDF has selection but Answer PDF also has selection
             self.mark_stem_btn.setEnabled(False)
-            self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
             self.mark_stem_btn.setToolTip("Don't select selection in Answer PDF - Clear the Answer PDF selection first")
         elif not question_selection:
             # No selection in Question PDF
             self.mark_stem_btn.setEnabled(False)
-            self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
             self.mark_stem_btn.setToolTip("Select a Selection in Question PDF")
         else:
             # Fallback case
             self.mark_stem_btn.setEnabled(False)
-            self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
             self.mark_stem_btn.setToolTip("No selection in Question PDF")
     
@@ -1743,6 +1701,9 @@ class DualPDFViewerApp(QMainWindow):
         self.has_unsaved_changes = False
         self.is_closing = False
         
+        # Linking system variables
+        self.links_data = {"questions": {}}
+        
         # Auto-save timer - used for debouncing rapid changes
         self.autosave_timer = QTimer()
         self.autosave_timer.setSingleShot(True)
@@ -1755,12 +1716,6 @@ class DualPDFViewerApp(QMainWindow):
         # Navigation tracking variables
         self.current_annotation_index = {1: 0, 2: 0}  # Current annotation index for each viewer
         self.all_annotations = {1: [], 2: []}  # List of all annotations for each viewer
-        
-        # Linking system variables
-        self.links_data = {"questions": {}}
-        self.current_stem_mode = False
-        self.current_stem_id = None
-        self.undo_stack = []  # For Ctrl+Z functionality
         
         self.init_ui()
         
@@ -2069,22 +2024,13 @@ class DualPDFViewerApp(QMainWindow):
         self.link_btn.clicked.connect(self.show_link_screen)
         counter_layout.addWidget(self.link_btn)
         
-        # Stem button
-        self.stem_btn = QPushButton("Mark selection as Stem")
-        self.stem_btn.setFixedHeight(50)
-        self.stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
-        self.stem_btn.setEnabled(False)  # Initially disabled
-        self.stem_btn.clicked.connect(self.handle_s_key)
-        self.stem_btn.setToolTip("No selection in Question PDF")
-        counter_layout.addWidget(self.stem_btn)
-        
         # Instructions for linking
         linking_instructions = QLabel("💡 Linking Instructions:")
         linking_instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
         linking_instructions.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold; margin: 10px 0;")
         counter_layout.addWidget(linking_instructions)
         
-        l_key_instructions = QLabel("• Select Question + Answer, press L to link\n• Press U to unlink selection\n• Press S for stem operations\n• Ctrl+Z to undo")
+        l_key_instructions = QLabel("• Select Question + Answer, press L to link\n• Press U to unlink selection\n• Green = linked, Red = unlinked")
         l_key_instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l_key_instructions.setStyleSheet("color: #cccccc; font-size: 10px; margin: 5px 0;")
         l_key_instructions.setWordWrap(True)
@@ -2118,10 +2064,6 @@ class DualPDFViewerApp(QMainWindow):
         
         self.answers_next_shortcut = QShortcut(QKeySequence("Ctrl+Alt+Right"), self)
         self.answers_next_shortcut.activated.connect(lambda: self.navigate_annotations(2, 1))
-        
-        # Undo shortcut
-        self.undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
-        self.undo_shortcut.activated.connect(self.undo_last_action)
 
     def toggle_auto_teleport_mode(self):
         """Toggle the auto teleport mode on/off"""
@@ -2367,24 +2309,10 @@ class DualPDFViewerApp(QMainWindow):
         pass  # Removed
     
     def on_selection_changed(self):
-        """Called when selection changes - updates link screen button state and triggers auto-navigation"""
+        """Called when selection changes - updates link screen button state"""
         # Update link screen button state if it exists
         if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'update_mark_stem_button_state'):
             self.link_screen.update_mark_stem_button_state()
-        
-        # Update main app stem button state
-        self.update_main_stem_button_state()
-        
-        # Update mode indicator
-        self.update_mode_indicator()
-        
-        # Auto-navigate to linked selection
-        question_selection, answer_selection = self.get_selected_annotations()
-        
-        if question_selection and hasattr(question_selection, 'selection_id'):
-            self.auto_navigate_to_linked(question_selection.selection_id, 1)
-        elif answer_selection and hasattr(answer_selection, 'selection_id'):
-            self.auto_navigate_to_linked(answer_selection.selection_id, 2)
 
     def switch_active_viewer(self):
         """Switch to the other PDF viewer"""
@@ -2427,6 +2355,9 @@ class DualPDFViewerApp(QMainWindow):
         # Rebuild annotation lists for navigation
         self.rebuild_annotation_lists()
         self.update_navigation_labels()
+        
+        # Update visual states based on links
+        self.update_visual_states()
         
 
 
@@ -2708,6 +2639,24 @@ class DualPDFViewerApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, 'Save Error', f'Failed to save PDF pair: {e}')
 
+    def clear_all_pending_links(self):
+        """Clear all pending links (yellow highlighting) from both viewers"""
+        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                for annotation in page_widget.annotations:
+                    if hasattr(annotation, 'is_pending_link') and annotation.is_pending_link:
+                        annotation.set_linked_highlight(False)
+                        annotation.is_pending_link = False
+                page_widget.viewport().update()
+        
+        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
+            for page_widget in self.viewer2.page_widgets:
+                for annotation in page_widget.annotations:
+                    if hasattr(annotation, 'is_pending_link') and annotation.is_pending_link:
+                        annotation.set_linked_highlight(False)
+                        annotation.is_pending_link = False
+                page_widget.viewport().update()
+
     def load_links_data(self):
         """Load links data from links.json"""
         try:
@@ -2751,18 +2700,9 @@ class DualPDFViewerApp(QMainWindow):
     
     def create_link(self, question_id, answer_id):
         """Create a link between question and answer"""
-        # Store previous state for undo
-        old_answer = self.links_data["questions"].get(question_id, {}).get("answer")
-        self.undo_stack.append({
-            "action": "link",
-            "question_id": question_id,
-            "old_answer": old_answer,
-            "new_answer": answer_id
-        })
-        
         # Create or update the question entry
         if question_id not in self.links_data["questions"]:
-            self.links_data["questions"][question_id] = {"answer": None, "stem": None}
+            self.links_data["questions"][question_id] = {"answer": None}
         
         self.links_data["questions"][question_id]["answer"] = answer_id
         self.save_links_data()
@@ -2782,23 +2722,8 @@ class DualPDFViewerApp(QMainWindow):
     def unlink_selection(self, selection_id):
         """Unlink a selection (remove from links)"""
         if selection_id in self.links_data["questions"]:
-            # Store for undo
-            old_data = self.links_data["questions"][selection_id].copy()
-            self.undo_stack.append({
-                "action": "unlink",
-                "question_id": selection_id,
-                "old_data": old_data
-            })
-            
-            # Remove stem first, then answer
-            self.links_data["questions"][selection_id]["stem"] = None
-            self.links_data["questions"][selection_id]["answer"] = None
-            
-            # Remove empty entries
-            if (self.links_data["questions"][selection_id]["answer"] is None and 
-                self.links_data["questions"][selection_id]["stem"] is None):
-                del self.links_data["questions"][selection_id]
-            
+            # Remove the link
+            del self.links_data["questions"][selection_id]
             self.save_links_data()
             
             # Force immediate visual update
@@ -2812,71 +2737,6 @@ class DualPDFViewerApp(QMainWindow):
             if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
                 for page_widget in self.viewer2.page_widgets:
                     page_widget.viewport().update()
-    
-    def mark_as_stem(self, question_id):
-        """Mark a question as a stem"""
-        if question_id not in self.links_data["questions"]:
-            self.links_data["questions"][question_id] = {"answer": None, "stem": None}
-        
-        self.links_data["questions"][question_id]["stem"] = question_id
-        self.current_stem_mode = True
-        self.current_stem_id = question_id
-        self.save_links_data()
-        
-        # Force immediate visual update
-        self.update_visual_states()
-        
-        # Force viewport updates
-        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
-            for page_widget in self.viewer1.page_widgets:
-                page_widget.viewport().update()
-        
-        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
-            for page_widget in self.viewer2.page_widgets:
-                page_widget.viewport().update()
-        
-        self.update_stem_button()
-        self.update_mode_indicator()
-    
-    def add_to_stem(self, question_id):
-        """Add a question to the current stem"""
-        if self.current_stem_id and question_id != self.current_stem_id:
-            if question_id not in self.links_data["questions"]:
-                self.links_data["questions"][question_id] = {"answer": None, "stem": None}
-            
-            self.links_data["questions"][question_id]["stem"] = self.current_stem_id
-            self.save_links_data()
-            
-            # Force immediate visual update
-            self.update_visual_states()
-            
-            # Force viewport updates
-            if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
-                for page_widget in self.viewer1.page_widgets:
-                    page_widget.viewport().update()
-            
-            if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
-                for page_widget in self.viewer2.page_widgets:
-                    page_widget.viewport().update()
-    
-    def finish_stem_mode(self):
-        """Finish stem mode"""
-        self.current_stem_mode = False
-        self.current_stem_id = None
-        self.update_stem_button()
-        self.update_mode_indicator()
-        
-        # Update visual states after finishing stem mode
-        self.update_visual_states()
-        
-        # Force viewport updates
-        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
-            for page_widget in self.viewer1.page_widgets:
-                page_widget.viewport().update()
-        
-        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
-            for page_widget in self.viewer2.page_widgets:
-                page_widget.viewport().update()
     
     def update_visual_states(self):
         """Update visual states of all annotations based on links"""
@@ -2900,164 +2760,26 @@ class DualPDFViewerApp(QMainWindow):
             return
         
         selection_id = annotation.selection_id
-        question_data = self.links_data["questions"].get(selection_id, {})
         
-        # Determine visual state
         if viewer_id == 1:  # Question viewer
-            has_answer = question_data.get("answer") is not None
-            has_stem = question_data.get("stem") is not None
-            is_stem_itself = question_data.get("stem") == selection_id
-            
-            if is_stem_itself:
-                # Magenta for stem itself
-                annotation.set_link_state("magenta")
-                print(f"Question {selection_id}: MAGENTA (stem itself)")
-            elif has_answer and has_stem:
-                # Dark green for linked to both stem and answer
-                annotation.set_link_state("dark_green")
-                print(f"Question {selection_id}: DARK GREEN (both)")
-            elif has_answer:
-                # Green for linked to answer only
+            # Check if this question is linked to an answer
+            if selection_id in self.links_data["questions"]:
                 annotation.set_link_state("green")
-                print(f"Question {selection_id}: GREEN (answer only)")
-            elif has_stem:
-                # Dark red for linked to stem only
-                annotation.set_link_state("dark_red")
-                print(f"Question {selection_id}: DARK RED (stem only)")
             else:
-                # Red for unlinked
                 annotation.set_link_state("red")
-                print(f"Question {selection_id}: RED (unlinked)")
         
         elif viewer_id == 2:  # Answer viewer
-            # Find if this answer is linked to any question
+            # Check if this answer is linked to any question
             is_linked = False
-            for q_data in self.links_data["questions"].values():
-                if q_data.get("answer") == selection_id:
+            for question_data in self.links_data["questions"].values():
+                if question_data.get("answer") == selection_id:
                     is_linked = True
                     break
             
             if is_linked:
                 annotation.set_link_state("green")
-                print(f"Answer {selection_id}: GREEN (linked)")
             else:
                 annotation.set_link_state("red")
-                print(f"Answer {selection_id}: RED (unlinked)")
-    
-    def auto_navigate_to_linked(self, selection_id, viewer_id):
-        """Auto-navigate to linked selection"""
-        if viewer_id == 1:  # Question selected
-            question_data = self.links_data["questions"].get(selection_id, {})
-            answer_id = question_data.get("answer")
-            if answer_id:
-                self.navigate_to_selection(answer_id, 2)
-        
-        elif viewer_id == 2:  # Answer selected
-            # Find question that links to this answer
-            for question_id, question_data in self.links_data["questions"].items():
-                if question_data.get("answer") == selection_id:
-                    self.navigate_to_selection(question_id, 1)
-                    break
-    
-    def navigate_to_selection(self, selection_id, target_viewer_id):
-        """Navigate to a specific selection in the target viewer"""
-        target_viewer = self.viewer1 if target_viewer_id == 1 else self.viewer2
-        
-        # Find the annotation with this selection_id
-        for page_index, page_widget in enumerate(target_viewer.page_widgets):
-            for annotation in page_widget.annotations:
-                if hasattr(annotation, 'selection_id') and annotation.selection_id == selection_id:
-                    # Navigate to the page
-                    self.go_to_annotation(target_viewer_id, page_index)
-                    
-                    # Select the annotation
-                    if page_widget.selected_rect:
-                        page_widget.selected_rect.deselect()
-                    page_widget.selected_rect = annotation
-                    annotation.select()
-                    page_widget.viewport().update()
-                    
-                    # Update the current page index
-                    target_viewer.set_current_page(page_index)
-                    return
-    
-    def update_stem_button(self):
-        """Update the stem button text and state"""
-        if hasattr(self, 'mark_stem_btn'):
-            if self.current_stem_mode:
-                self.mark_stem_btn.setText("Done (S)")
-                self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #dc3545; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #c82333; }")
-            else:
-                self.mark_stem_btn.setText("Mark selection as Stem")
-                self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
-        
-        # Also update main app stem button
-        if hasattr(self, 'stem_btn'):
-            if self.current_stem_mode:
-                self.stem_btn.setText("Done (S)")
-                self.stem_btn.setStyleSheet("QPushButton { background-color: #dc3545; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #c82333; }")
-            else:
-                self.stem_btn.setText("Mark selection as Stem")
-                self.stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
-    
-    def update_main_stem_button_state(self):
-        """Update the main app stem button state based on current selections"""
-        if not hasattr(self, 'stem_btn'):
-            return
-        
-        if self.current_stem_mode:
-            # In stem mode - show "Done" button
-            self.stem_btn.setEnabled(True)
-            self.stem_btn.setText("Done (S)")
-            self.stem_btn.setStyleSheet("QPushButton { background-color: #dc3545; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #c82333; }")
-            self.stem_btn.setToolTip("Finish stem mode")
-        else:
-            question_selection, answer_selection = self.get_selected_annotations()
-            
-            if question_selection and not answer_selection:
-                # Check if question is already linked to an answer
-                question_id = question_selection.selection_id
-                question_data = self.links_data["questions"].get(question_id, {})
-                if question_data.get("answer") is not None:
-                    # Question is already linked to an answer
-                    self.stem_btn.setEnabled(False)
-                    self.stem_btn.setText("Mark selection as Stem")
-                    self.stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
-                    self.stem_btn.setToolTip("Cannot mark linked Question as Stem")
-                else:
-                    # All conditions met - button is active
-                    self.stem_btn.setEnabled(True)
-                    self.stem_btn.setText("Mark selection as Stem")
-                    self.stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; }")
-                    self.stem_btn.setToolTip("Mark Selection as Stem is active! ✓ Question PDF has selection ✓ Answer PDF has no selection ✓ Question is not linked")
-            elif question_selection and answer_selection:
-                # Question PDF has selection but Answer PDF also has selection
-                self.stem_btn.setEnabled(False)
-                self.stem_btn.setText("Mark selection as Stem")
-                self.stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
-                self.stem_btn.setToolTip("Don't select selection in Answer PDF - Clear the Answer PDF selection first")
-            elif not question_selection:
-                # No selection in Question PDF
-                self.stem_btn.setEnabled(False)
-                self.stem_btn.setText("Mark selection as Stem")
-                self.stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
-                self.stem_btn.setToolTip("Select a Selection in Question PDF")
-            else:
-                # Fallback case
-                self.stem_btn.setEnabled(False)
-                self.stem_btn.setText("Mark selection as Stem")
-                self.stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; }")
-                self.stem_btn.setToolTip("No selection in Question PDF")
-    
-    def update_mode_indicator(self):
-        """Update the mode indicator in the toolbar"""
-        if hasattr(self, 'mode_label'):
-            if self.current_stem_mode:
-                self.mode_label.setText("Mode: Stem Mode")
-                self.mode_label.setStyleSheet("color: #8a2be2; font-size: 11px; padding: 2px 4px; font-weight: bold;")
-            else:
-                self.mode_label.setText("Mode: Selection Editor")
-                self.mode_label.setStyleSheet("color: #0078d4; font-size: 11px; padding: 2px 4px; font-weight: bold;")
     
     def handle_l_key(self):
         """Handle L key press for linking"""
@@ -3097,89 +2819,6 @@ class DualPDFViewerApp(QMainWindow):
                     break
         else:
             self.status_bar.showMessage("No selection to unlink")
-    
-    def handle_s_key(self):
-        """Handle S key press for stem operations"""
-        if self.current_stem_mode:
-            # Check if we're adding to stem or finishing stem mode
-            question_selection, answer_selection = self.get_selected_annotations()
-            
-            if question_selection and not answer_selection:
-                # Add question to current stem
-                question_id = question_selection.selection_id
-                if question_id != self.current_stem_id:
-                    self.add_to_stem(question_id)
-                    self.status_bar.showMessage("Question added to stem")
-                else:
-                    self.status_bar.showMessage("Cannot add stem to itself")
-            else:
-                # Finish stem mode
-                self.finish_stem_mode()
-                self.status_bar.showMessage("Stem mode finished")
-        else:
-            # Start stem mode with current question selection
-            question_selection, answer_selection = self.get_selected_annotations()
-            
-            if not question_selection:
-                self.status_bar.showMessage("Select a Question to mark as Stem")
-                return
-            
-            if answer_selection:
-                self.status_bar.showMessage("Cannot mark as Stem when Answer is selected")
-                return
-            
-            # Check if question is already linked to an answer
-            question_id = question_selection.selection_id
-            question_data = self.links_data["questions"].get(question_id, {})
-            if question_data.get("answer") is not None:
-                self.status_bar.showMessage("Cannot mark linked Question as Stem")
-                return
-            
-            self.mark_as_stem(question_id)
-            self.status_bar.showMessage("Question marked as Stem")
-    
-    def undo_last_action(self):
-        """Undo the last linking action"""
-        if not self.undo_stack:
-            return
-        
-        last_action = self.undo_stack.pop()
-        
-        if last_action["action"] == "link":
-            question_id = last_action["question_id"]
-            old_answer = last_action["old_answer"]
-            
-            if question_id in self.links_data["questions"]:
-                self.links_data["questions"][question_id]["answer"] = old_answer
-                if old_answer is None and self.links_data["questions"][question_id]["stem"] is None:
-                    del self.links_data["questions"][question_id]
-        
-        elif last_action["action"] == "unlink":
-            question_id = last_action["question_id"]
-            old_data = last_action["old_data"]
-            self.links_data["questions"][question_id] = old_data
-        
-        self.save_links_data()
-        self.update_visual_states()
-        self.status_bar.showMessage("Undo completed")
-
-    def clear_all_pending_links(self):
-        """Clear all pending links (yellow highlighting) from both viewers"""
-        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
-            for page_widget in self.viewer1.page_widgets:
-                for annotation in page_widget.annotations:
-                    if hasattr(annotation, 'is_pending_link') and annotation.is_pending_link:
-                        annotation.set_linked_highlight(False)
-                        annotation.is_pending_link = False
-                page_widget.viewport().update()
-        
-        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
-            for page_widget in self.viewer2.page_widgets:
-                for annotation in page_widget.annotations:
-                    if hasattr(annotation, 'is_pending_link') and annotation.is_pending_link:
-                        annotation.set_linked_highlight(False)
-                        annotation.is_pending_link = False
-                page_widget.viewport().update()
 
     def closeEvent(self, event: QCloseEvent):
         """Handle application close event with auto-save"""
