@@ -115,6 +115,10 @@ class SelectableRect(QGraphicsRectItem):
             # Green for linked
             pen = QPen(QColor(0, 255, 0), 3)
             brush = QBrush(QColor(0, 255, 0, 80))
+        elif state == "magenta":
+            # Magenta for stem
+            pen = QPen(QColor(255, 0, 255), 3)
+            brush = QBrush(QColor(255, 0, 255, 80))
         else:
             # Default to original
             pen = self.original_pen
@@ -591,6 +595,16 @@ class PDFPage(QGraphicsView):
                 # Show status message
                 if hasattr(app, 'status_bar'):
                     app.status_bar.showMessage("Pending link cleared from selected rectangle", 2000)
+        
+        # NEW: S key binding for marking/unmarking stems
+        elif event.key() == Qt.Key.Key_S:
+            # Check if we're in link mode
+            if hasattr(app, 'link_screen') and app.link_screen:
+                # We're in link mode, use the link screen's handle_s_key method
+                app.link_screen.handle_s_key()
+            else:
+                # We're in main viewer mode, use the main app's handle_s_key method
+                app.handle_s_key()
         
         super().keyPressEvent(event)
     
@@ -1148,7 +1162,7 @@ class HomeScreen(QWidget):
                 
                 # Add status indicators
                 if not pdf1_exists or not pdf2_exists:
-                    display_text += "\n⚠️ Some PDF files are missing"
+                    display_text += "\⚠️ Some PDF files are missing"
                     item.setBackground(QColor(255, 200, 200))  # Light red background
                 
                 item.setText(display_text)
@@ -1296,7 +1310,7 @@ class LinkScreen(QWidget):
         self.mark_stem_btn.setFixedHeight(50)
         self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
         self.mark_stem_btn.setEnabled(False)  # Initially disabled
-        self.mark_stem_btn.clicked.connect(self.mark_selection_as_stem)
+        self.mark_stem_btn.clicked.connect(self.toggle_stem_marking)
         # Set initial tooltip
         self.mark_stem_btn.setToolTip("No selection in Question PDF")
         side_layout.addWidget(self.mark_stem_btn)
@@ -1306,7 +1320,7 @@ class LinkScreen(QWidget):
         instructions_label.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: bold; margin-top: 20px;")
         side_layout.addWidget(instructions_label)
         
-        l_key_instructions = QLabel("• Press L key to capture Selection ID\n• Selected rectangles turn yellow when linked\n• Links are stored in links.json\n• Only works with valid Selection IDs")
+        l_key_instructions = QLabel("• Press L key to capture Selection ID\n• Press S key to mark/unmark as Stem\n• Selected rectangles turn yellow when linked\n• Links are stored in links.json\n• Only works with valid Selection IDs")
         l_key_instructions.setStyleSheet("color: #cccccc; font-size: 12px; line-height: 1.4; margin: 10px 0;")
         l_key_instructions.setWordWrap(True)
         side_layout.addWidget(l_key_instructions)
@@ -1451,11 +1465,14 @@ class LinkScreen(QWidget):
             
             # Use a timer to sync scroll positions after the Selection Editor is fully shown
             QTimer.singleShot(100, self.sync_scroll_positions_to_parent)
+            
+            # Update visual states after returning to main viewer
+            QTimer.singleShot(200, self.parent_app.update_visual_states)
     
     def mark_selection_as_stem(self):
-        """Mark the selected selection as stem (dummy function)"""
-        # This is a dummy function that does nothing when clicked
-        pass
+        """Mark the selected selection as stem"""
+        if self.parent_app:
+            self.parent_app.handle_mark_stem()
     
     def sync_selections_to_parent(self):
         """Sync selections from LinkScreen viewers back to parent app viewers"""
@@ -1570,25 +1587,237 @@ class LinkScreen(QWidget):
         
         # Update button state, styling, and tooltip based on selection conditions
         if question_selection and not answer_selection:
-            # All conditions met - button is active and purple
-            self.mark_stem_btn.setEnabled(True)
-            self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; } QPushButton:enabled { background-color: #8a8a2be2; }")
-            self.mark_stem_btn.setToolTip("Mark Selection as Stem is active! ✓ Question PDF has selection ✓ Answer PDF has no selection")
+            # Check if the question is already marked as stem
+            selection_id = getattr(question_selection, 'selection_id', None)
+            is_already_stem = False
+            if selection_id and self.parent_app and hasattr(self.parent_app, 'links_data'):
+                if selection_id in self.parent_app.links_data.get("questions", {}):
+                    question_data = self.parent_app.links_data["questions"][selection_id]
+                    is_already_stem = question_data.get("isStem", False)
+            
+            if is_already_stem:
+                # Already marked as stem - button shows as stem and allows unmarking
+                self.mark_stem_btn.setEnabled(True)
+                self.mark_stem_btn.setText("Unmark as Stem")
+                self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; } QPushButton:enabled { background-color: #8a2be2; }")
+                self.mark_stem_btn.setToolTip("Click to unmark this selection as a Stem (or press S key)")
+            else:
+                # All conditions met - button is active and purple
+                self.mark_stem_btn.setEnabled(True)
+                self.mark_stem_btn.setText("Mark selection as Stem")
+                self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; } QPushButton:enabled { background-color: #8a2be2; }")
+                self.mark_stem_btn.setToolTip("Mark Selection as Stem is active! ✓ Question PDF has selection ✓ Answer PDF has no selection (or press S key)")
         elif question_selection and answer_selection:
             # Question PDF has selection but Answer PDF also has selection
             self.mark_stem_btn.setEnabled(False)
+            self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
-            self.mark_stem_btn.setToolTip("Don't select selection in Answer PDF - Clear the Answer PDF selection first")
+            self.mark_stem_btn.setToolTip("Don't select selection in Answer PDF - Clear the Answer PDF selection first (or press S key)")
         elif not question_selection:
             # No selection in Question PDF
             self.mark_stem_btn.setEnabled(False)
+            self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
-            self.mark_stem_btn.setToolTip("Select a Selection in Question PDF")
+            self.mark_stem_btn.setToolTip("Select a Selection in Question PDF (or press S key)")
         else:
             # Fallback case
             self.mark_stem_btn.setEnabled(False)
+            self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
-            self.mark_stem_btn.setToolTip("No selection in Question PDF")
+            self.mark_stem_btn.setToolTip("No selection in Question PDF (or press S key)")
+    
+    def toggle_stem_marking(self):
+        """Toggle between marking and unmarking a selection as a stem"""
+        # Get current selections
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        if not question_selection:
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            return
+        
+        # Check if already marked as stem
+        is_already_stem = False
+        if selection_id in self.parent_app.links_data.get("questions", {}):
+            question_data = self.parent_app.links_data["questions"][selection_id]
+            is_already_stem = question_data.get("isStem", False)
+        
+        if is_already_stem:
+            # Unmark as stem
+            self.handle_unmark_stem()
+        else:
+            # Mark as stem
+            self.handle_mark_stem()
+    
+    def get_selected_annotations(self):
+        """Get currently selected annotations from both viewers"""
+        question_selection = None
+        answer_selection = None
+        
+        # Check viewer1 (Questions)
+        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                    question_selection = page_widget.selected_rect
+                    break
+        
+        # Check viewer2 (Answers)
+        if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
+            for page_widget in self.viewer2.page_widgets:
+                if hasattr(page_widget, 'selected_rect') and page_widget.selected_rect:
+                    answer_selection = page_widget.selected_rect
+                    break
+        
+        return question_selection, answer_selection
+    
+    def handle_unmark_stem(self):
+        """Unmark a selection that was previously marked as a Stem"""
+        # Get current selections
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        # Must have a question selected and no answer selected
+        if not question_selection:
+            self.parent_app.status_bar.showMessage("Select a Question to unmark as Stem")
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            self.parent_app.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if it's actually marked as stem
+        if selection_id not in self.parent_app.links_data.get("questions", {}):
+            self.parent_app.status_bar.showMessage("Selection is not marked as Stem")
+            return
+            
+        question_data = self.parent_app.links_data["questions"][selection_id]
+        if not question_data.get("isStem"):
+            self.parent_app.status_bar.showMessage("Selection is not marked as Stem")
+            return
+        
+        # Remove the isStem flag
+        del question_data["isStem"]
+        
+        # If the question entry is empty (no answer, no stem), remove it entirely
+        if not question_data or (question_data.get("answer") is None and "isStem" not in question_data):
+            del self.parent_app.links_data["questions"][selection_id]
+        
+        # Persist
+        self.parent_app.save_links_data()
+        
+        # Visual update (back to red)
+        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                for annotation in page_widget.annotations:
+                    if getattr(annotation, 'selection_id', None) == selection_id:
+                        annotation.set_link_state("red")
+                        page_widget.viewport().update()
+                        break
+        
+        # Also update visual states in the main viewer
+        self.parent_app.update_visual_states()
+        
+        # Status
+        self.parent_app.status_bar.showMessage(f"Unmarked {selection_id} as Stem")
+        
+        # Update the mark stem button state
+        self.update_mark_stem_button_state()
+    
+    def handle_mark_stem(self):
+        """Mark the selected unlinked Question as a Stem"""
+        # Get current selections
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        # Must have a question selected and no answer selected
+        if not question_selection:
+            self.parent_app.status_bar.showMessage("Select a Question to mark as Stem")
+            return
+        if answer_selection:
+            self.parent_app.status_bar.showMessage("Cannot mark as Stem when Answer is selected")
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            self.parent_app.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if already marked as stem
+        if selection_id in self.parent_app.links_data.get("questions", {}):
+            question_data = self.parent_app.links_data["questions"][selection_id]
+            if question_data.get("isStem"):
+                self.parent_app.status_bar.showMessage(f"Selection {selection_id} is already marked as Stem")
+                return
+            if question_data.get("answer") is not None:
+                self.parent_app.status_bar.showMessage("Cannot mark linked Question as Stem")
+                return
+        
+        # Ensure question entry exists
+        if "questions" not in self.parent_app.links_data:
+            self.parent_app.links_data["questions"] = {}
+        if selection_id not in self.parent_app.links_data["questions"]:
+            self.parent_app.links_data["questions"][selection_id] = {"answer": None}
+        
+        # Set isStem to true
+        self.parent_app.links_data["questions"][selection_id]["isStem"] = True
+        
+        # Persist
+        self.parent_app.save_links_data()
+        
+        # Visual update (magenta)
+        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                for annotation in page_widget.annotations:
+                    if getattr(annotation, 'selection_id', None) == selection_id:
+                        annotation.set_link_state("magenta")
+                        page_widget.viewport().update()
+                        break
+        
+        # Also update visual states in the main viewer
+        self.parent_app.update_visual_states()
+        
+        # Status
+        self.parent_app.status_bar.showMessage(f"Marked {selection_id} as Stem")
+        
+        # Update the mark stem button state
+        self.update_mark_stem_button_state()
+    
+    def mark_selection_as_stem(self):
+        """Mark the selected selection as stem"""
+        if self.parent_app:
+            self.parent_app.handle_mark_stem()
+    
+    def handle_s_key(self):
+        """Handle S key press for marking/unmarking stems in link mode"""
+        # Get current selections
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        # Must have a question selected and no answer selected
+        if not question_selection:
+            self.parent_app.status_bar.showMessage("Select a Question to mark/unmark as Stem")
+            return
+        if answer_selection:
+            self.parent_app.status_bar.showMessage("Cannot mark/unmark as Stem when Answer is selected")
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            self.parent_app.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if already marked as stem
+        is_already_stem = False
+        if selection_id in self.parent_app.links_data.get("questions", {}):
+            question_data = self.parent_app.links_data["questions"][selection_id]
+            is_already_stem = question_data.get("isStem", False)
+        
+        if is_already_stem:
+            # Unmark as stem
+            self.handle_unmark_stem()
+        else:
+            # Mark as stem
+            self.handle_mark_stem()
     
     def capture_selection_id(self, selection_id, selected_rect, viewer_id, page_index):
         """Capture Selection ID and store in links.json for Link Mode"""
@@ -2036,7 +2265,7 @@ class DualPDFViewerApp(QMainWindow):
         linking_instructions.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold; margin: 10px 0;")
         counter_layout.addWidget(linking_instructions)
         
-        l_key_instructions = QLabel("• Select Question + Answer, press L to link\n• Press U to unlink selection\n• Green = linked, Red = unlinked")
+        l_key_instructions = QLabel("• Select Question + Answer, press L to link\n• Press U to unlink selection\n• Press S to mark/unmark as Stem\n• Green = linked, Red = unlinked, Magenta = stem")
         l_key_instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l_key_instructions.setStyleSheet("color: #cccccc; font-size: 10px; margin: 5px 0;")
         l_key_instructions.setWordWrap(True)
@@ -2755,14 +2984,16 @@ class DualPDFViewerApp(QMainWindow):
         if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
             for page_widget in self.viewer1.page_widgets:
                 for annotation in page_widget.annotations:
-                    self.update_annotation_visual_state(annotation, 1)
+                    if hasattr(annotation, 'set_link_state'):
+                        self.update_annotation_visual_state(annotation, 1)
                 page_widget.viewport().update()
         
         # Update viewer2 (Answers)
         if hasattr(self, 'viewer2') and hasattr(self.viewer2, 'page_widgets'):
             for page_widget in self.viewer2.page_widgets:
                 for annotation in page_widget.annotations:
-                    self.update_annotation_visual_state(annotation, 2)
+                    if hasattr(annotation, 'set_link_state'):
+                        self.update_annotation_visual_state(annotation, 2)
                 page_widget.viewport().update()
     
     def update_annotation_visual_state(self, annotation, viewer_id):
@@ -2773,11 +3004,17 @@ class DualPDFViewerApp(QMainWindow):
         selection_id = annotation.selection_id
         
         if viewer_id == 1:  # Question viewer
-            # Check if this question is linked to an answer
-            if selection_id in self.links_data["questions"]:
-                annotation.set_link_state("green")
-            else:
-                annotation.set_link_state("red")
+            # Check stem status first
+            if selection_id in self.links_data.get("questions", {}):
+                question_data = self.links_data["questions"][selection_id]
+                if question_data.get("isStem"):
+                    annotation.set_link_state("magenta")
+                    return
+                elif question_data.get("answer") is not None:
+                    annotation.set_link_state("green")
+                    return
+            # Default to red for unlinked questions
+            annotation.set_link_state("red")
         
         elif viewer_id == 2:  # Answer viewer
             # Check if this answer is linked to any question
@@ -2830,6 +3067,194 @@ class DualPDFViewerApp(QMainWindow):
                     break
         else:
             self.status_bar.showMessage("No selection to unlink")
+    
+    def handle_s_key(self):
+        """Handle S key press for marking/unmarking stems"""
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        # Must have a question selected and no answer selected
+        if not question_selection:
+            self.status_bar.showMessage("Select a Question to mark/unmark as Stem")
+            return
+        if answer_selection:
+            self.status_bar.showMessage("Cannot mark/unmark as Stem when Answer is selected")
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            self.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if already marked as stem
+        is_already_stem = False
+        if selection_id in self.links_data.get("questions", {}):
+            question_data = self.links_data["questions"][selection_id]
+            is_already_stem = question_data.get("isStem", False)
+        
+        if is_already_stem:
+            # Unmark as stem
+            self.unmark_selection_as_stem(selection_id)
+        else:
+            # Mark as stem
+            self.mark_selection_as_stem(selection_id)
+    
+    def mark_selection_as_stem(self, selection_id):
+        """Mark a selection as a stem"""
+        # Ensure question entry exists
+        if "questions" not in self.links_data:
+            self.links_data["questions"] = {}
+        if selection_id not in self.links_data["questions"]:
+            self.links_data["questions"][selection_id] = {"answer": None}
+        
+        # Set isStem to true
+        self.links_data["questions"][selection_id]["isStem"] = True
+        
+        # Persist
+        self.save_links_data()
+        
+        # Update visual states
+        self.update_visual_states()
+        
+        # Status
+        self.status_bar.showMessage(f"Marked {selection_id} as Stem")
+    
+    def unmark_selection_as_stem(self, selection_id):
+        """Unmark a selection that was previously marked as a stem"""
+        if selection_id not in self.links_data.get("questions", {}):
+            return
+            
+        question_data = self.links_data["questions"][selection_id]
+        if not question_data.get("isStem"):
+            return
+        
+        # Remove the isStem flag
+        del question_data["isStem"]
+        
+        # If the question entry is empty (no answer, no stem), remove it entirely
+        if not question_data or (question_data.get("answer") is None and "isStem" not in question_data):
+            del self.links_data["questions"][selection_id]
+        
+        # Persist
+        self.save_links_data()
+        
+        # Update visual states
+        self.update_visual_states()
+        
+        # Status
+        self.status_bar.showMessage(f"Unmarked {selection_id} as Stem")
+    
+    def handle_mark_stem(self):
+        """Mark the selected unlinked Question as a Stem"""
+        # Get current selections
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        # Must have a question selected and no answer selected
+        if not question_selection:
+            self.status_bar.showMessage("Select a Question to mark as Stem")
+            return
+        if answer_selection:
+            self.status_bar.showMessage("Cannot mark as Stem when Answer is selected")
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            self.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if already marked as stem
+        if selection_id in self.links_data.get("questions", {}):
+            question_data = self.links_data["questions"][selection_id]
+            if question_data.get("isStem"):
+                self.status_bar.showMessage(f"Selection {selection_id} is already marked as Stem")
+                return
+            if question_data.get("answer") is not None:
+                self.status_bar.showMessage("Cannot mark linked Question as Stem")
+                return
+        
+        # Ensure question entry exists
+        if "questions" not in self.links_data:
+            self.links_data["questions"] = {}
+        if selection_id not in self.links_data["questions"]:
+            self.links_data["questions"][selection_id] = {"answer": None}
+        
+        # Set isStem to true
+        self.links_data["questions"][selection_id]["isStem"] = True
+        
+        # Persist
+        self.save_links_data()
+        
+        # Visual update (magenta)
+        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                for annotation in page_widget.annotations:
+                    if getattr(annotation, 'selection_id', None) == selection_id:
+                        annotation.set_link_state("magenta")
+                        page_widget.viewport().update()
+                        break
+        
+        # Also update visual states in the main viewer if we're in link mode
+        if hasattr(self, 'parent_app') and self.parent_app:
+            self.parent_app.update_visual_states()
+        
+        # Status
+        self.status_bar.showMessage(f"Marked {selection_id} as Stem")
+        
+        # Update the mark stem button state
+        self.update_mark_stem_button_state()
+    
+    def handle_unmark_stem(self):
+        """Unmark a selection that was previously marked as a Stem"""
+        # Get current selections
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        # Must have a question selected and no answer selected
+        if not question_selection:
+            self.status_bar.showMessage("Select a Question to unmark as Stem")
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            self.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if it's actually marked as stem
+        if selection_id not in self.links_data.get("questions", {}):
+            self.status_bar.showMessage("Selection is not marked as Stem")
+            return
+            
+        question_data = self.links_data["questions"][selection_id]
+        if not question_data.get("isStem"):
+            self.status_bar.showMessage("Selection is not marked as Stem")
+            return
+        
+        # Remove the isStem flag
+        del question_data["isStem"]
+        
+        # If the question entry is empty (no answer, no stem), remove it entirely
+        if not question_data or (question_data.get("answer") is None and "isStem" not in question_data):
+            del self.links_data["questions"][selection_id]
+        
+        # Persist
+        self.save_links_data()
+        
+        # Visual update (back to red)
+        if hasattr(self, 'viewer1') and hasattr(self.viewer1, 'page_widgets'):
+            for page_widget in self.viewer1.page_widgets:
+                for annotation in page_widget.annotations:
+                    if getattr(annotation, 'selection_id', None) == selection_id:
+                        annotation.set_link_state("red")
+                        page_widget.viewport().update()
+                        break
+        
+        # Also update visual states in the main viewer if we're in link mode
+        if hasattr(self, 'parent_app') and self.parent_app:
+            self.parent_app.update_visual_states()
+        
+        # Status
+        self.status_bar.showMessage(f"Unmarked {selection_id} as Stem")
+        
+        # Update the mark stem button state
+        self.update_mark_stem_button_state()
     
     def auto_select_linked_selection(self, selected_annotation, current_viewer_id):
         """Auto-select the linked selection in the other viewer"""
