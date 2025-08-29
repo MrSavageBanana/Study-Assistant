@@ -119,6 +119,14 @@ class SelectableRect(QGraphicsRectItem):
             # Magenta for stem
             pen = QPen(QColor(255, 0, 255), 3)
             brush = QBrush(QColor(255, 0, 255, 80))
+        elif state == "dark_red":
+            # Dark Red for stem-linked questions without answers
+            pen = QPen(QColor(139, 0, 0), 3)
+            brush = QBrush(QColor(139, 0, 0, 80))
+        elif state == "dark_green":
+            # Dark Green for stem-linked questions with answers
+            pen = QPen(QColor(0, 100, 0), 3)
+            brush = QBrush(QColor(0, 100, 0, 80))
         else:
             # Default to original
             pen = self.original_pen
@@ -605,6 +613,16 @@ class PDFPage(QGraphicsView):
             else:
                 # We're in main viewer mode, use the main app's handle_s_key method
                 app.handle_s_key()
+        
+        # NEW: R key binding for removing questions from stems
+        elif event.key() == Qt.Key.Key_R:
+            # Check if we're in link mode
+            if hasattr(app, 'link_screen') and app.link_screen:
+                # We're in link mode, use the link screen's handle_r_key method
+                app.link_screen.handle_r_key()
+            else:
+                # We're in main viewer mode, use the main app's handle_r_key method
+                app.handle_r_key()
         
         super().keyPressEvent(event)
     
@@ -1162,7 +1180,7 @@ class HomeScreen(QWidget):
                 
                 # Add status indicators
                 if not pdf1_exists or not pdf2_exists:
-                    display_text += "\⚠️ Some PDF files are missing"
+                    display_text += "\n⚠️ Some PDF files are missing"
                     item.setBackground(QColor(255, 200, 200))  # Light red background
                 
                 item.setText(display_text)
@@ -1235,6 +1253,8 @@ class LinkScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_app = parent
+        self.add_questions_mode = False  # Track if we're in add questions mode
+        self.current_stem_id = None      # Track the current stem being added to
         self.init_ui()
         
     def init_ui(self):
@@ -1315,12 +1335,21 @@ class LinkScreen(QWidget):
         self.mark_stem_btn.setToolTip("No selection in Question PDF")
         side_layout.addWidget(self.mark_stem_btn)
         
+        # Add Questions to Stem button
+        self.add_questions_btn = QPushButton("Add Questions to Stem")
+        self.add_questions_btn.setFixedHeight(50)
+        self.add_questions_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+        self.add_questions_btn.setEnabled(False)  # Initially disabled
+        self.add_questions_btn.clicked.connect(self.toggle_add_questions_mode)
+        self.add_questions_btn.setToolTip("Click to enter Add Questions to Stem mode")
+        side_layout.addWidget(self.add_questions_btn)
+        
         # NEW: Instructions for L key binding
         instructions_label = QLabel("💡 Link Mode Instructions:")
         instructions_label.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: bold; margin-top: 20px;")
         side_layout.addWidget(instructions_label)
         
-        l_key_instructions = QLabel("• Press L key to capture Selection ID\n• Press S key to mark/unmark as Stem\n• Selected rectangles turn yellow when linked\n• Links are stored in links.json\n• Only works with valid Selection IDs")
+        l_key_instructions = QLabel("• Press L key to capture Selection ID\n• Press S key to mark/unmark as Stem\n• Press R key to remove from Stem\n• Use 'Add Questions to Stem' to link questions\n• Dark Red = stem-linked (no answer), Dark Green = stem-linked (with answer)\n• Links are stored in links.json")
         l_key_instructions.setStyleSheet("color: #cccccc; font-size: 12px; line-height: 1.4; margin: 10px 0;")
         l_key_instructions.setWordWrap(True)
         side_layout.addWidget(l_key_instructions)
@@ -1381,6 +1410,12 @@ class LinkScreen(QWidget):
         
         # Update the mark stem button state and set initial tooltip
         self.update_mark_stem_button_state()
+        
+        # Initialize Add Questions button state
+        self.add_questions_btn.setEnabled(False)
+        self.add_questions_btn.setText("Add Questions to Stem")
+        self.add_questions_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+        self.add_questions_btn.setToolTip("Select a Stem first to add questions to")
         
         # Sync toolbar state with parent app
         if self.parent_app:
@@ -1468,6 +1503,10 @@ class LinkScreen(QWidget):
             
             # Update visual states after returning to main viewer
             QTimer.singleShot(200, self.parent_app.update_visual_states)
+            
+            # Reset add questions mode
+            self.add_questions_mode = False
+            self.current_stem_id = None
     
     def mark_selection_as_stem(self):
         """Mark the selected selection as stem"""
@@ -1601,30 +1640,65 @@ class LinkScreen(QWidget):
                 self.mark_stem_btn.setText("Unmark as Stem")
                 self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; } QPushButton:enabled { background-color: #8a2be2; }")
                 self.mark_stem_btn.setToolTip("Click to unmark this selection as a Stem (or press S key)")
+                
+                # Enable Add Questions to Stem button when a stem is selected
+                self.add_questions_btn.setEnabled(True)
+                if self.add_questions_mode and self.current_stem_id == selection_id:
+                    self.add_questions_btn.setText("Exit Add Questions Mode")
+                    self.add_questions_btn.setStyleSheet("QPushButton { background-color: #ff6b35; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #ff5722; } QPushButton:enabled { background-color: #ff6b35; }")
+                    self.add_questions_btn.setToolTip("Click to exit Add Questions to Stem mode")
+                else:
+                    self.add_questions_btn.setText("Add Questions to Stem")
+                    self.add_questions_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:enabled { background-color: #6c757d; }")
+                    self.add_questions_btn.setToolTip("Click to enter Add Questions to Stem mode")
             else:
                 # All conditions met - button is active and purple
                 self.mark_stem_btn.setEnabled(True)
                 self.mark_stem_btn.setText("Mark selection as Stem")
                 self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #8a2be2; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #7b68ee; } QPushButton:enabled { background-color: #8a2be2; }")
                 self.mark_stem_btn.setToolTip("Mark Selection as Stem is active! ✓ Question PDF has selection ✓ Answer PDF has no selection (or press S key)")
+                
+                # Disable Add Questions to Stem button when no stem is selected
+                self.add_questions_btn.setEnabled(False)
+                self.add_questions_btn.setText("Add Questions to Stem")
+                self.add_questions_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+                self.add_questions_btn.setToolTip("Select a Stem first to add questions to")
         elif question_selection and answer_selection:
             # Question PDF has selection but Answer PDF also has selection
             self.mark_stem_btn.setEnabled(False)
             self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
             self.mark_stem_btn.setToolTip("Don't select selection in Answer PDF - Clear the Answer PDF selection first (or press S key)")
+            
+            # Disable Add Questions to Stem button
+            self.add_questions_btn.setEnabled(False)
+            self.add_questions_btn.setText("Add Questions to Stem")
+            self.add_questions_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+            self.add_questions_btn.setToolTip("Clear Answer PDF selection first")
         elif not question_selection:
             # No selection in Question PDF
             self.mark_stem_btn.setEnabled(False)
             self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
             self.mark_stem_btn.setToolTip("Select a Selection in Question PDF (or press S key)")
+            
+            # Disable Add Questions to Stem button
+            self.add_questions_btn.setEnabled(False)
+            self.add_questions_btn.setText("Add Questions to Stem")
+            self.add_questions_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+            self.add_questions_btn.setToolTip("Select a Question first")
         else:
             # Fallback case
             self.mark_stem_btn.setEnabled(False)
             self.mark_stem_btn.setText("Mark selection as Stem")
             self.mark_stem_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
             self.mark_stem_btn.setToolTip("No selection in Question PDF (or press S key)")
+            
+            # Disable Add Questions to Stem button
+            self.add_questions_btn.setEnabled(False)
+            self.add_questions_btn.setText("Add Questions to Stem")
+            self.add_questions_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+            self.add_questions_btn.setToolTip("No selection available")
     
     def toggle_stem_marking(self):
         """Toggle between marking and unmarking a selection as a stem"""
@@ -1650,6 +1724,147 @@ class LinkScreen(QWidget):
         else:
             # Mark as stem
             self.handle_mark_stem()
+    
+    def toggle_add_questions_mode(self):
+        """Toggle Add Questions to Stem mode on/off"""
+        if self.add_questions_mode:
+            # Exit add questions mode
+            self.add_questions_mode = False
+            self.current_stem_id = None
+            self.add_questions_btn.setText("Add Questions to Stem")
+            self.add_questions_btn.setStyleSheet("QPushButton { background-color: #6c757d; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #5a6268; } QPushButton:disabled { background-color: #6c757d; color: #999; } QPushButton:enabled { background-color: #6c757d; }")
+            self.add_questions_btn.setToolTip("Click to enter Add Questions to Stem mode")
+            self.parent_app.status_bar.showMessage("Exited Add Questions to Stem mode")
+        else:
+            # Enter add questions mode - need a stem selected
+            question_selection, answer_selection = self.get_selected_annotations()
+            
+            if not question_selection:
+                self.parent_app.status_bar.showMessage("Select a Stem to add questions to")
+                return
+            
+            if answer_selection:
+                self.parent_app.status_bar.showMessage("Cannot add questions to stem when Answer is selected")
+                return
+            
+            selection_id = getattr(question_selection, 'selection_id', None)
+            if not selection_id:
+                self.parent_app.status_bar.showMessage("Invalid selection")
+                return
+            
+            # Check if it's actually a stem
+            if selection_id not in self.parent_app.links_data.get("questions", {}):
+                self.parent_app.status_bar.showMessage("Selection is not marked as a Stem")
+                return
+                
+            question_data = self.parent_app.links_data["questions"][selection_id]
+            if not question_data.get("isStem"):
+                self.parent_app.status_bar.showMessage("Selection is not marked as a Stem")
+                return
+            
+            # Enter add questions mode
+            self.add_questions_mode = True
+            self.current_stem_id = selection_id
+            self.add_questions_btn.setText("Exit Add Questions Mode")
+            self.add_questions_btn.setStyleSheet("QPushButton { background-color: #ff6b35; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; } QPushButton:hover:enabled { background-color: #ff5722; } QPushButton:enabled { background-color: #ff6b35; }")
+            self.add_questions_btn.setToolTip("Click to exit Add Questions to Stem mode")
+            self.parent_app.status_bar.showMessage(f"Add Questions to Stem mode active - select questions and press S to add to stem {selection_id}")
+    
+    def add_question_to_stem(self, question_id):
+        """Add a question to the current stem"""
+        if not self.add_questions_mode or not self.current_stem_id:
+            return
+        
+        # Don't add the stem to itself
+        if question_id == self.current_stem_id:
+            self.parent_app.status_bar.showMessage("Cannot add stem to itself")
+            return
+        
+        # Check if question is already linked to this stem
+        if question_id in self.parent_app.links_data.get("questions", {}):
+            question_data = self.parent_app.links_data["questions"][question_id]
+            if question_data.get("stem") == self.current_stem_id:
+                self.parent_app.status_bar.showMessage(f"Question {question_id} is already linked to this stem")
+                return
+        
+        # Ensure question entry exists
+        if "questions" not in self.parent_app.links_data:
+            self.parent_app.links_data["questions"] = {}
+        if question_id not in self.parent_app.links_data["questions"]:
+            self.parent_app.links_data["questions"][question_id] = {"answer": None}
+        
+        # Link question to stem
+        self.parent_app.links_data["questions"][question_id]["stem"] = self.current_stem_id
+        
+        # Persist
+        self.parent_app.save_links_data()
+        
+        # Update visual states
+        self.parent_app.update_visual_states()
+        
+        # Status
+        self.parent_app.status_bar.showMessage(f"Added question {question_id} to stem {self.current_stem_id}")
+    
+    def handle_r_key(self):
+        """Handle R key press for removing questions from stems in link mode"""
+        # Get current selections
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        # Must have a question selected and no answer selected
+        if not question_selection:
+            self.parent_app.status_bar.showMessage("Select a Question to remove from Stem")
+            return
+        if answer_selection:
+            self.parent_app.status_bar.showMessage("Cannot remove from Stem when Answer is selected")
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            self.parent_app.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if this question is linked to a stem
+        if selection_id not in self.parent_app.links_data.get("questions", {}):
+            self.parent_app.status_bar.showMessage("Question is not linked to any stem")
+            return
+            
+        question_data = self.parent_app.links_data["questions"][selection_id]
+        if not question_data.get("stem"):
+            self.parent_app.status_bar.showMessage("Question is not linked to any stem")
+            return
+        
+        # Remove from stem
+        self.remove_question_from_stem(selection_id)
+    
+    def remove_question_from_stem(self, question_id):
+        """Remove a question from its stem"""
+        if not self.parent_app or not question_id:
+            return
+        
+        if question_id not in self.parent_app.links_data.get("questions", {}):
+            self.parent_app.status_bar.showMessage("Question is not linked to any stem")
+            return
+        
+        question_data = self.parent_app.links_data["questions"][question_id]
+        if "stem" not in question_data:
+            self.parent_app.status_bar.showMessage("Question is not linked to any stem")
+            return
+        
+        stem_id = question_data["stem"]
+        del question_data["stem"]
+        
+        # If the question entry is empty (no answer, no stem), remove it entirely
+        if not question_data or (question_data.get("answer") is None and "stem" not in question_data):
+            del self.parent_app.links_data["questions"][question_id]
+        
+        # Persist
+        self.parent_app.save_links_data()
+        
+        # Update visual states
+        self.parent_app.update_visual_states()
+        
+        # Status
+        self.parent_app.status_bar.showMessage(f"Removed question {question_id} from stem {stem_id}")
     
     def get_selected_annotations(self):
         """Get currently selected annotations from both viewers"""
@@ -1789,13 +2004,13 @@ class LinkScreen(QWidget):
             self.parent_app.handle_mark_stem()
     
     def handle_s_key(self):
-        """Handle S key press for marking/unmarking stems in link mode"""
+        """Handle S key press for marking/unmarking stems or adding questions to stems in link mode"""
         # Get current selections
         question_selection, answer_selection = self.get_selected_annotations()
         
         # Must have a question selected and no answer selected
         if not question_selection:
-            self.parent_app.status_bar.showMessage("Select a Question to mark/unmark as Stem")
+            self.parent_app.status_bar.showMessage("Select a Question to mark/unmark as Stem or add to Stem")
             return
         if answer_selection:
             self.parent_app.status_bar.showMessage("Cannot mark/unmark as Stem when Answer is selected")
@@ -1804,6 +2019,12 @@ class LinkScreen(QWidget):
         selection_id = getattr(question_selection, 'selection_id', None)
         if not selection_id:
             self.parent_app.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if we're in add questions mode
+        if self.add_questions_mode and self.current_stem_id:
+            # Add this question to the current stem
+            self.add_question_to_stem(selection_id)
             return
         
         # Check if already marked as stem
@@ -2265,7 +2486,7 @@ class DualPDFViewerApp(QMainWindow):
         linking_instructions.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold; margin: 10px 0;")
         counter_layout.addWidget(linking_instructions)
         
-        l_key_instructions = QLabel("• Select Question + Answer, press L to link\n• Press U to unlink selection\n• Press S to mark/unmark as Stem\n• Green = linked, Red = unlinked, Magenta = stem")
+        l_key_instructions = QLabel("• Select Question + Answer, press L to link\n• Press U to unlink selection\n• Press S to mark/unmark as Stem\n• Press R to remove from Stem\n• Green = linked, Red = unlinked, Magenta = stem")
         l_key_instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l_key_instructions.setStyleSheet("color: #cccccc; font-size: 10px; margin: 5px 0;")
         l_key_instructions.setWordWrap(True)
@@ -3010,6 +3231,15 @@ class DualPDFViewerApp(QMainWindow):
                 if question_data.get("isStem"):
                     annotation.set_link_state("magenta")
                     return
+                elif question_data.get("stem") is not None:
+                    # This question is linked to a stem
+                    if question_data.get("answer") is not None:
+                        # Has answer - Dark Green
+                        annotation.set_link_state("dark_green")
+                    else:
+                        # No answer - Dark Red
+                        annotation.set_link_state("dark_red")
+                    return
                 elif question_data.get("answer") is not None:
                     annotation.set_link_state("green")
                     return
@@ -3142,6 +3372,61 @@ class DualPDFViewerApp(QMainWindow):
         
         # Status
         self.status_bar.showMessage(f"Unmarked {selection_id} as Stem")
+    
+    def handle_r_key(self):
+        """Handle R key press for removing questions from stems"""
+        question_selection, answer_selection = self.get_selected_annotations()
+        
+        # Must have a question selected and no answer selected
+        if not question_selection:
+            self.status_bar.showMessage("Select a Question to remove from Stem")
+            return
+        if answer_selection:
+            self.status_bar.showMessage("Cannot remove from Stem when Answer is selected")
+            return
+        
+        selection_id = getattr(question_selection, 'selection_id', None)
+        if not selection_id:
+            self.status_bar.showMessage("Invalid selection")
+            return
+        
+        # Check if this question is linked to a stem
+        if selection_id not in self.links_data.get("questions", {}):
+            self.status_bar.showMessage("Question is not linked to any stem")
+            return
+            
+        question_data = self.links_data["questions"][selection_id]
+        if not question_data.get("stem"):
+            self.status_bar.showMessage("Question is not linked to any stem")
+            return
+        
+        # Remove from stem
+        self.remove_question_from_stem(selection_id)
+    
+    def remove_question_from_stem(self, selection_id):
+        """Remove a question from its stem"""
+        if selection_id not in self.links_data.get("questions", {}):
+            return
+            
+        question_data = self.links_data["questions"][selection_id]
+        if not question_data.get("stem"):
+            return
+        
+        stem_id = question_data["stem"]
+        del question_data["stem"]
+        
+        # If the question entry is empty (no answer, no stem), remove it entirely
+        if not question_data or (question_data.get("answer") is None and "stem" not in question_data):
+            del self.links_data["questions"][selection_id]
+        
+        # Persist
+        self.save_links_data()
+        
+        # Update visual states
+        self.update_visual_states()
+        
+        # Status
+        self.status_bar.showMessage(f"Removed question {selection_id} from stem {stem_id}")
     
     def handle_mark_stem(self):
         """Mark the selected unlinked Question as a Stem"""
