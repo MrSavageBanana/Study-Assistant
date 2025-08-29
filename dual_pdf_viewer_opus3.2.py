@@ -1349,7 +1349,7 @@ class LinkScreen(QWidget):
         instructions_label.setStyleSheet("color: #ffffff; font-size: 14px; font-weight: bold; margin-top: 20px;")
         side_layout.addWidget(instructions_label)
         
-        l_key_instructions = QLabel("• Press L key to capture Selection ID\n• Press S key to mark/unmark as Stem\n• Press R key to remove from Stem\n• Use 'Add Questions to Stem' to link questions\n• Dark Red = stem-linked (no answer), Dark Green = stem-linked (with answer)\n• Links are stored in links.json")
+        l_key_instructions = QLabel("• Press L key to capture Selection ID\n• Press S key to mark/unmark as Stem\n• Press R key to remove from Stem\n• Use 'Add Questions to Stem' to link questions\n• Dark Red = stem-linked (no answer), Dark Green = stem-linked (with answer)\n• Links are stored in links.json\n\n📋 RULES: Questions can only belong to one stem, stems cannot have answers")
         l_key_instructions.setStyleSheet("color: #cccccc; font-size: 12px; line-height: 1.4; margin: 10px 0;")
         l_key_instructions.setWordWrap(True)
         side_layout.addWidget(l_key_instructions)
@@ -1780,6 +1780,11 @@ class LinkScreen(QWidget):
             self.parent_app.status_bar.showMessage("Cannot add stem to itself")
             return
         
+        # RULE ENFORCEMENT: Check for circular stem references
+        if self.parent_app.has_circular_stem_reference(question_id, self.current_stem_id):
+            self.parent_app.status_bar.showMessage(f"Cannot add {question_id} to stem {self.current_stem_id} - would create circular reference")
+            return
+        
         # Check if question is already linked to this stem
         if question_id in self.parent_app.links_data.get("questions", {}):
             question_data = self.parent_app.links_data["questions"][question_id]
@@ -1793,7 +1798,14 @@ class LinkScreen(QWidget):
         if question_id not in self.parent_app.links_data["questions"]:
             self.parent_app.links_data["questions"][question_id] = {"answer": None}
         
-        # Link question to stem
+        # RULE ENFORCEMENT: If question was linked to a different stem, remove old link
+        old_stem_id = None
+        if question_id in self.parent_app.links_data["questions"]:
+            old_stem_id = self.parent_app.links_data["questions"][question_id].get("stem")
+            if old_stem_id and old_stem_id != self.current_stem_id:
+                self.parent_app.status_bar.showMessage(f"RULE ENFORCED: Question {question_id} was linked to stem {old_stem_id}, now linked to {self.current_stem_id}")
+        
+        # Link question to stem (overwrites any existing stem link)
         self.parent_app.links_data["questions"][question_id]["stem"] = self.current_stem_id
         
         # Persist
@@ -1803,7 +1815,10 @@ class LinkScreen(QWidget):
         self.parent_app.update_visual_states()
         
         # Status
-        self.parent_app.status_bar.showMessage(f"Added question {question_id} to stem {self.current_stem_id}")
+        if old_stem_id and old_stem_id != self.current_stem_id:
+            self.parent_app.status_bar.showMessage(f"Replaced stem link: {question_id} now linked to {self.current_stem_id} (was {old_stem_id})")
+        else:
+            self.parent_app.status_bar.showMessage(f"Added question {question_id} to stem {self.current_stem_id}")
     
     def handle_r_key(self):
         """Handle R key press for removing questions from stems in link mode"""
@@ -1967,6 +1982,15 @@ class LinkScreen(QWidget):
             if question_data.get("answer") is not None:
                 self.parent_app.status_bar.showMessage("Cannot mark linked Question as Stem")
                 return
+        
+        # RULE ENFORCEMENT: If this question is linked to a stem, remove the stem link
+        # since stems cannot have stem links (they are the source, not the target)
+        if selection_id in self.parent_app.links_data.get("questions", {}):
+            question_data = self.parent_app.links_data["questions"][selection_id]
+            if question_data.get("stem") is not None:
+                old_stem_id = question_data["stem"]
+                del question_data["stem"]
+                self.parent_app.status_bar.showMessage(f"RULE ENFORCED: Removed stem link to {old_stem_id} before marking as stem")
         
         # Ensure question entry exists
         if "questions" not in self.parent_app.links_data:
@@ -2486,7 +2510,7 @@ class DualPDFViewerApp(QMainWindow):
         linking_instructions.setStyleSheet("color: #ffffff; font-size: 12px; font-weight: bold; margin: 10px 0;")
         counter_layout.addWidget(linking_instructions)
         
-        l_key_instructions = QLabel("• Select Question + Answer, press L to link\n• Press U to unlink selection\n• Press S to mark/unmark as Stem\n• Press R to remove from Stem\n• Green = linked, Red = unlinked, Magenta = stem")
+        l_key_instructions = QLabel("• Select Question + Answer, press L to link\n• Press U to unlink selection\n• Press S to mark/unmark as Stem\n• Press R to remove from Stem\n• Green = linked, Red = unlinked, Magenta = stem\n\n📋 RULES: Questions can only belong to one stem, stems cannot have answers")
         l_key_instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
         l_key_instructions.setStyleSheet("color: #cccccc; font-size: 10px; margin: 5px 0;")
         l_key_instructions.setWordWrap(True)
@@ -3124,10 +3148,56 @@ class DualPDFViewerApp(QMainWindow):
         except Exception as e:
             print(f"Error loading links: {e}")
             self.links_data = {"questions": {}, "stems": {}}
+        
+        # RULE ENFORCEMENT: Clean up any invalid data after loading
+        self.enforce_link_rules()
+    
+    def enforce_link_rules(self):
+        """Enforce all link rules to maintain data integrity"""
+        if "questions" not in self.links_data:
+            return
+        
+        questions_to_remove = []
+        stems_to_clean = []
+        
+        for question_id, question_data in self.links_data["questions"].items():
+            # RULE 1: Stems cannot have answers
+            if question_data.get("isStem") and question_data.get("answer") is not None:
+                print(f"RULE VIOLATION: Stem {question_id} had answer, removing answer")
+                question_data["answer"] = None
+                stems_to_clean.append(question_id)
+            
+            # RULE 2: Stems cannot be linked to other stems
+            if question_data.get("isStem") and question_data.get("stem") is not None:
+                print(f"RULE VIOLATION: Stem {question_id} was linked to stem {question_data['stem']}, removing stem link")
+                del question_data["stem"]
+                stems_to_clean.append(question_id)
+            
+            # RULE 3: Questions can only belong to one stem at a time
+            # (This is handled in add_question_to_stem method)
+            
+            # Clean up empty entries
+            if not question_data or (question_data.get("answer") is None and 
+                                   question_data.get("stem") is None and 
+                                   not question_data.get("isStem")):
+                questions_to_remove.append(question_id)
+        
+        # Remove empty entries
+        for question_id in questions_to_remove:
+            del self.links_data["questions"][question_id]
+            print(f"Removed empty question entry: {question_id}")
+        
+        # Save cleaned data
+        if questions_to_remove or stems_to_clean:
+            self.save_links_data()
+            print("Data cleaned and saved")
     
     def save_links_data(self):
         """Save links data to links.json"""
         try:
+            # RULE ENFORCEMENT: Validate data before saving
+            self.validate_link_data()
+            
             # Ensure required keys exist
             if "questions" not in self.links_data:
                 self.links_data["questions"] = {}
@@ -3137,6 +3207,46 @@ class DualPDFViewerApp(QMainWindow):
                 json.dump(self.links_data, f, indent=2)
         except Exception as e:
             print(f"Error saving links: {e}")
+    
+    def validate_link_data(self):
+        """Validate link data before saving to prevent rule violations"""
+        if "questions" not in self.links_data:
+            return
+        
+        for question_id, question_data in self.links_data["questions"].items():
+            # RULE 1: Stems cannot have answers
+            if question_data.get("isStem") and question_data.get("answer") is not None:
+                print(f"VALIDATION ERROR: Stem {question_id} has answer, removing answer")
+                question_data["answer"] = None
+            
+            # RULE 2: Stems cannot be linked to other stems
+            if question_data.get("isStem") and question_data.get("stem") is not None:
+                print(f"VALIDATION ERROR: Stem {question_id} is linked to stem {question_data['stem']}, removing stem link")
+                del question_data["stem"]
+            
+            # RULE 3: Questions can only belong to one stem at a time
+            # (This is handled in add_question_to_stem method)
+            
+            # RULE 4: Check for circular stem references
+            if question_data.get("stem"):
+                stem_id = question_data["stem"]
+                if self.has_circular_stem_reference(question_id, stem_id):
+                    print(f"VALIDATION ERROR: Circular stem reference detected, removing stem link from {question_id}")
+                    del question_data["stem"]
+    
+    def has_circular_stem_reference(self, question_id, stem_id):
+        """Check if adding a stem link would create a circular reference"""
+        if question_id == stem_id:
+            return True
+        
+        # Check if the stem is linked to another stem
+        if stem_id in self.links_data.get("questions", {}):
+            stem_data = self.links_data["questions"][stem_id]
+            if stem_data.get("stem"):
+                # Recursively check for circular references
+                return self.has_circular_stem_reference(question_id, stem_data["stem"])
+        
+        return False
     
     def get_selected_annotations(self):
         """Get currently selected annotations from both viewers"""
@@ -3161,6 +3271,13 @@ class DualPDFViewerApp(QMainWindow):
     
     def create_link(self, question_id, answer_id):
         """Create a link between question and answer"""
+        # RULE ENFORCEMENT: Stems cannot link to answers
+        if question_id in self.links_data.get("questions", {}):
+            question_data = self.links_data["questions"][question_id]
+            if question_data.get("isStem"):
+                self.status_bar.showMessage(f"Cannot link stem {question_id} to an answer - stems cannot have answers")
+                return
+        
         # Create or update the question entry
         if question_id not in self.links_data["questions"]:
             self.links_data["questions"][question_id] = {"answer": None}
@@ -3455,6 +3572,15 @@ class DualPDFViewerApp(QMainWindow):
             if question_data.get("answer") is not None:
                 self.status_bar.showMessage("Cannot mark linked Question as Stem")
                 return
+        
+        # RULE ENFORCEMENT: If this question is linked to a stem, remove the stem link
+        # since stems cannot have stem links (they are the source, not the target)
+        if selection_id in self.links_data.get("questions", {}):
+            question_data = self.links_data["questions"][selection_id]
+            if question_data.get("stem") is not None:
+                old_stem_id = question_data["stem"]
+                del question_data["stem"]
+                self.status_bar.showMessage(f"RULE ENFORCED: Removed stem link to {old_stem_id} before marking as stem")
         
         # Ensure question entry exists
         if "questions" not in self.links_data:
