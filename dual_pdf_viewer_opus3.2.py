@@ -522,6 +522,17 @@ class PDFPage(QGraphicsView):
             # Capture Selection ID in both main viewer and Link Mode
             self.capture_selection_id_for_linking()
         
+        # NEW: ESC key binding to cancel pending links
+        elif event.key() == Qt.Key.Key_Escape and self.selected_rect:
+            # Clear pending link only from the currently selected rectangle
+            if hasattr(self.selected_rect, 'is_pending_link') and self.selected_rect.is_pending_link:
+                self.selected_rect.set_linked_highlight(False)
+                self.selected_rect.is_pending_link = False
+                self.viewport().update()
+                # Show status message
+                if hasattr(app, 'status_bar'):
+                    app.status_bar.showMessage("Pending link cleared from selected rectangle", 2000)
+        
         super().keyPressEvent(event)
     
     def capture_selection_id_for_linking(self):
