@@ -395,8 +395,13 @@ class PDFPage(QGraphicsView):
                 break
         
         if clicked_rect:
-            if self.selected_rect:
-                self.selected_rect.deselect()
+            # Ensure only one selection exists in this viewer (across all pages)
+            if hasattr(self.owner, 'page_widgets'):
+                for pw in self.owner.page_widgets:
+                    if hasattr(pw, 'selected_rect') and pw.selected_rect:
+                        pw.selected_rect.deselect()
+                        pw.selected_rect = None
+                        pw.viewport().update()
             self.selected_rect = clicked_rect
             self.selected_rect.select()
             self.viewport().update()
@@ -2852,12 +2857,23 @@ class DualPDFViewerApp(QMainWindow):
         for page_index, page_widget in enumerate(target_viewer.page_widgets):
             for annotation in page_widget.annotations:
                 if hasattr(annotation, 'selection_id') and annotation.selection_id == selection_id:
-                    # Navigate to the page
-                    self.go_to_annotation(int(target_viewer.viewer_id), page_index)
+                    # Scroll to center this page in the viewport similar to go_to_annotation
+                    scroll_area = target_viewer.scroll_area
+                    viewport_height = scroll_area.viewport().height()
+                    page_pos = page_widget.mapTo(target_viewer.scroll_content, QPointF(0, 0))
+                    page_height = page_widget.height()
+                    target_scroll_y = page_pos.y() - (viewport_height - page_height) / 2
+                    max_scroll = target_viewer.scroll_content.height() - viewport_height
+                    target_scroll_y = max(0, min(target_scroll_y, max_scroll))
+                    scroll_area.verticalScrollBar().setValue(int(target_scroll_y))
                     
-                    # Clear any existing selection
-                    if page_widget.selected_rect:
-                        page_widget.selected_rect.deselect()
+                    # Clear any existing selection across all pages in this viewer
+                    if hasattr(target_viewer, 'page_widgets'):
+                        for pw in target_viewer.page_widgets:
+                            if hasattr(pw, 'selected_rect') and pw.selected_rect:
+                                pw.selected_rect.deselect()
+                                pw.selected_rect = None
+                                pw.viewport().update()
                     
                     # Select the annotation
                     page_widget.selected_rect = annotation
