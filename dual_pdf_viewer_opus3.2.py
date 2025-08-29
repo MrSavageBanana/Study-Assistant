@@ -1708,7 +1708,7 @@ class DualPDFViewerApp(QMainWindow):
         self.is_closing = False
         
         # Linking system variables
-        self.links_data = {"questions": {}}
+        self.links_data = {"questions": {}, "stems": {}}
         
         # Auto-save timer - used for debouncing rapid changes
         self.autosave_timer = QTimer()
@@ -2670,14 +2670,19 @@ class DualPDFViewerApp(QMainWindow):
                 with open(self.links_file, 'r') as f:
                     self.links_data = json.load(f)
             else:
-                self.links_data = {"questions": {}}
+                self.links_data = {"questions": {}, "stems": {}}
         except Exception as e:
             print(f"Error loading links: {e}")
-            self.links_data = {"questions": {}}
+            self.links_data = {"questions": {}, "stems": {}}
     
     def save_links_data(self):
         """Save links data to links.json"""
         try:
+            # Ensure required keys exist
+            if "questions" not in self.links_data:
+                self.links_data["questions"] = {}
+            if "stems" not in self.links_data:
+                self.links_data["stems"] = {}
             with open(self.links_file, 'w') as f:
                 json.dump(self.links_data, f, indent=2)
         except Exception as e:
