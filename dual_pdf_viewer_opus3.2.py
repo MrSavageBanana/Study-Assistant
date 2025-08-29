@@ -107,38 +107,34 @@ class SelectableRect(QGraphicsRectItem):
         # Store the link state for later reference
         self.current_link_state = state
         
-        # Only update if not currently selected (selected state overrides link state)
-        if not self.is_selected:
-            if state == "red":
-                # Red for unlinked
-                pen = QPen(QColor(255, 0, 0), 3)
-                brush = QBrush(QColor(255, 0, 0, 80))
-            elif state == "green":
-                # Green for linked
-                pen = QPen(QColor(0, 255, 0), 3)
-                brush = QBrush(QColor(0, 255, 0, 80))
-            else:
-                # Default to original
-                pen = self.original_pen
-                brush = self.original_brush
-            
+        if state == "red":
+            # Red for unlinked
+            pen = QPen(QColor(255, 0, 0), 3)
+            brush = QBrush(QColor(255, 0, 0, 80))
+        elif state == "green":
+            # Green for linked
+            pen = QPen(QColor(0, 255, 0), 3)
+            brush = QBrush(QColor(0, 255, 0, 80))
+        else:
+            # Default to original
+            pen = self.original_pen
+            brush = self.original_brush
+        
+        # Always update the pen and brush
+        self.setPen(pen)
+        self.setBrush(brush)
+        
+        # If currently selected, make it dashed
+        if self.is_selected:
+            pen.setStyle(Qt.PenStyle.DashLine)
             self.setPen(pen)
-            self.setBrush(brush)
     
     def select(self):
         self.is_selected = True
-        # Use dashed pen for selection, but keep the link state color
-        if hasattr(self, 'current_link_state') and self.current_link_state:
-            if self.current_link_state == "red":
-                pen = QPen(QColor(255, 0, 0), 3)
-            elif self.current_link_state == "green":
-                pen = QPen(QColor(0, 255, 0), 3)
-            else:
-                pen = self.selected_pen
-            pen.setStyle(Qt.PenStyle.DashLine)
-            self.setPen(pen)
-        else:
-            self.setPen(self.selected_pen)
+        # Make current pen dashed for selection
+        current_pen = self.pen()
+        current_pen.setStyle(Qt.PenStyle.DashLine)
+        self.setPen(current_pen)
         
     def deselect(self):
         self.is_selected = False
@@ -405,6 +401,11 @@ class PDFPage(QGraphicsView):
             self.selected_rect.select()
             self.viewport().update()
             self.selection_changed.emit()  # Emit selection changed signal
+            
+            # NEW: Auto-select linked selection in other viewer
+            app = self.window()
+            if hasattr(app, 'auto_select_linked_selection'):
+                app.auto_select_linked_selection(clicked_rect, self.owner.viewer_id)
             
             handle = self.get_handle_at_pos(self.selected_rect, scene_pos)
             if handle:
@@ -2819,6 +2820,53 @@ class DualPDFViewerApp(QMainWindow):
                     break
         else:
             self.status_bar.showMessage("No selection to unlink")
+    
+    def auto_select_linked_selection(self, selected_annotation, current_viewer_id):
+        """Auto-select the linked selection in the other viewer"""
+        if not hasattr(selected_annotation, 'selection_id') or not selected_annotation.selection_id:
+            return
+        
+        selection_id = selected_annotation.selection_id
+        target_viewer_id = 2 if current_viewer_id == 1 else 1
+        target_viewer = self.viewer1 if target_viewer_id == 1 else self.viewer2
+        
+        # Find the linked selection
+        linked_selection_id = None
+        
+        if current_viewer_id == 1:  # Question selected, find linked answer
+            if selection_id in self.links_data["questions"]:
+                linked_selection_id = self.links_data["questions"][selection_id].get("answer")
+        else:  # Answer selected, find linked question
+            for question_id, question_data in self.links_data["questions"].items():
+                if question_data.get("answer") == selection_id:
+                    linked_selection_id = question_id
+                    break
+        
+        if linked_selection_id:
+            # Find and select the linked annotation
+            self.select_linked_annotation(target_viewer, linked_selection_id)
+    
+    def select_linked_annotation(self, target_viewer, selection_id):
+        """Navigate to and select a specific annotation in the target viewer"""
+        # Find the annotation with this selection_id
+        for page_index, page_widget in enumerate(target_viewer.page_widgets):
+            for annotation in page_widget.annotations:
+                if hasattr(annotation, 'selection_id') and annotation.selection_id == selection_id:
+                    # Navigate to the page
+                    self.go_to_annotation(int(target_viewer.viewer_id), page_index)
+                    
+                    # Clear any existing selection
+                    if page_widget.selected_rect:
+                        page_widget.selected_rect.deselect()
+                    
+                    # Select the annotation
+                    page_widget.selected_rect = annotation
+                    annotation.select()
+                    page_widget.viewport().update()
+                    
+                    # Update the current page index
+                    target_viewer.set_current_page(page_index)
+                    return
 
     def closeEvent(self, event: QCloseEvent):
         """Handle application close event with auto-save"""
