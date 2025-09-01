@@ -167,6 +167,8 @@ class HomeworkPractice(QMainWindow):
         self.current_question_index = 0
         self.current_question = None
         self.showing_answer = False
+        self.showing_stem = False
+        self.current_stem_id = None
         self.random_order = True  # Default to random order
         
         # File paths
@@ -368,6 +370,28 @@ class HomeworkPractice(QMainWindow):
             }
         """)
         actions_layout.addWidget(self.help_btn)
+        
+        self.show_stem_btn = QPushButton("Show Stem")
+        self.show_stem_btn.clicked.connect(self.toggle_stem_question)
+        self.show_stem_btn.setEnabled(False)
+        self.show_stem_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #20c997;
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #1ea085;
+            }
+            QPushButton:disabled {
+                background-color: #adb5bd;
+            }
+        """)
+        actions_layout.addWidget(self.show_stem_btn)
         
         self.new_session_btn = QPushButton("New Practice Session")
         self.new_session_btn.clicked.connect(self.setup_practice_session)
@@ -588,18 +612,24 @@ class HomeworkPractice(QMainWindow):
         
         # Check if question has a stem
         stem_id = question_data.get('stem')
+        self.current_stem_id = stem_id
         if stem_id:
             stem_data = self.links_data.get('questions', {}).get(stem_id, {})
             if stem_data.get('isStem'):
                 self.stem_label.setText(f"Stem: {stem_id}")
-                # Load stem image
-                self.load_question_image(stem_id, "Stem")
+                # Always show the question, not the stem
+                self.load_question_image(question_id, "Question")
+                self.showing_stem = False
+                self.show_stem_btn.setEnabled(True)
+                self.show_stem_btn.setText("Show Stem")
             else:
                 self.stem_label.setText("Stem: Invalid stem reference")
                 self.load_question_image(question_id, "Question")
+                self.show_stem_btn.setEnabled(False)
         else:
             self.stem_label.setText("Stem: None")
             self.load_question_image(question_id, "Question")
+            self.show_stem_btn.setEnabled(False)
         
         # Update button states
         self.show_answer_btn.setEnabled(True)
@@ -814,6 +844,22 @@ class HomeworkPractice(QMainWindow):
             print(f"Error loading answer image: {e}")
             QMessageBox.critical(self, "Error", f"Error loading answer: {e}")
     
+    def toggle_stem_question(self):
+        """Toggle between showing stem and question"""
+        if not self.current_question or not self.current_stem_id:
+            return
+        
+        if self.showing_stem:
+            # Currently showing stem, switch to question
+            self.load_question_image(self.current_question, "Question")
+            self.show_stem_btn.setText("Show Stem")
+            self.showing_stem = False
+        else:
+            # Currently showing question, switch to stem
+            self.load_question_image(self.current_stem_id, "Stem")
+            self.show_stem_btn.setText("Show Question")
+            self.showing_stem = True
+    
     def toggle_answer(self):
         """Toggle between showing question and answer"""
         if not self.current_question:
@@ -910,6 +956,7 @@ class HomeworkPractice(QMainWindow):
             self.load_current_question()
             self.show_answer_btn.setText("Show Answer")
             self.showing_answer = False
+            self.showing_stem = False
     
     def next_question(self):
         """Go to next question"""
@@ -919,6 +966,7 @@ class HomeworkPractice(QMainWindow):
             self.load_current_question()
             self.show_answer_btn.setText("Show Answer")
             self.showing_answer = False
+            self.showing_stem = False
     
     def toggle_order(self):
         """Toggle between random and structured order"""
