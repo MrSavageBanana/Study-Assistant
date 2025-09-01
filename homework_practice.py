@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
-from PyQt6.QtGui import QPixmap, QImage, QFont, QPalette, QColor
+from PyQt6.QtGui import QPixmap, QImage, QFont, QPalette, QColor, QPainter
 
 class HelpNoteDialog(QDialog):
     """Dialog for adding help notes to questions"""
@@ -64,10 +64,12 @@ class PerfectImageViewer(QWidget):
         super().__init__(parent)
         self.pdf_document = None
         self.current_page = None
+        self.stem_pixmap = None
+        self.question_pixmap = None
         
         layout = QVBoxLayout()
         
-        # Image display with better styling
+        # Main image display with better styling
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setMinimumSize(500, 600)
@@ -114,10 +116,10 @@ class PerfectImageViewer(QWidget):
             return False
     
     def extract_perfect_region(self, page_num, x1, y1, x2, y2):
-        """Extract and display a perfectly cut out region from a page"""
+        """Extract a perfectly cut out region from a page and return as QPixmap"""
         if not self.pdf_document or page_num >= len(self.pdf_document):
             self.status_label.setText("Invalid page number")
-            return False
+            return None
         
         try:
             page = self.pdf_document[page_num]
@@ -134,21 +136,103 @@ class PerfectImageViewer(QWidget):
             qimg = QImage.fromData(img_data)
             pixmap = QPixmap.fromImage(qimg)
             
-            # Scale to fit the label while maintaining aspect ratio
-            scaled_pixmap = pixmap.scaled(
-                self.image_label.size(), 
-                Qt.AspectRatioMode.KeepAspectRatio, 
-                Qt.TransformationMode.SmoothTransformation
-            )
-            
-            self.image_label.setPixmap(scaled_pixmap)
-            self.status_label.setText(f"Image loaded: {x2-x1:.0f}×{y2-y1:.0f} pixels")
-            return True
+            return pixmap
             
         except Exception as e:
             print(f"Error extracting region: {e}")
             self.status_label.setText(f"Error extracting image: {e}")
-            return False
+            return None
+    
+    def display_combined_images(self, stem_pixmap=None, question_pixmap=None):
+        """Display stem and question images side by side or stacked"""
+        try:
+            if not stem_pixmap and not question_pixmap:
+                self.image_label.clear()
+                self.status_label.setText("No images to display")
+                return
+            
+            # Get available space
+            available_width = self.image_label.width() - 20  # Account for padding
+            available_height = self.image_label.height() - 20
+            
+            if stem_pixmap and question_pixmap:
+                # Both images available - display side by side
+                stem_scaled = stem_pixmap.scaled(
+                    available_width // 2 - 10, available_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                
+                question_scaled = question_pixmap.scaled(
+                    available_width // 2 - 10, available_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                
+                # Create combined image
+                combined_width = stem_scaled.width() + question_scaled.width() + 20
+                combined_height = max(stem_scaled.height(), question_scaled.height())
+                
+                combined_pixmap = QPixmap(combined_width, combined_height)
+                combined_pixmap.fill(Qt.GlobalColor.white)
+                
+                # Draw stem on left
+                painter = QPainter(combined_pixmap)
+                painter.drawPixmap(0, 0, stem_scaled)
+                painter.drawPixmap(stem_scaled.width() + 20, 0, question_scaled)
+                painter.end()
+                
+                self.image_label.setPixmap(combined_pixmap)
+                self.status_label.setText(f"Stem + Question: {stem_scaled.width()}×{stem_scaled.height()} + {question_scaled.width()}×{question_scaled.height()}")
+                
+            elif stem_pixmap:
+                # Only stem available
+                scaled_pixmap = stem_pixmap.scaled(
+                    available_width, available_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self.image_label.setPixmap(scaled_pixmap)
+                self.status_label.setText(f"Stem only: {scaled_pixmap.width()}×{scaled_pixmap.height()}")
+                
+            elif question_pixmap:
+                # Only question available
+                scaled_pixmap = question_pixmap.scaled(
+                    available_width, available_height,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self.image_label.setPixmap(scaled_pixmap)
+                self.status_label.setText(f"Question only: {scaled_pixmap.width()}×{scaled_pixmap.height()}")
+                
+        except Exception as e:
+            print(f"Error displaying combined images: {e}")
+            self.status_label.setText(f"Error displaying images: {e}")
+    
+    def display_single_image(self, pixmap):
+        """Display a single image"""
+        if not pixmap:
+            self.image_label.clear()
+            self.status_label.setText("No image to display")
+            return
+        
+        try:
+            # Scale to fit the label while maintaining aspect ratio
+            available_width = self.image_label.width() - 20
+            available_height = self.image_label.height() - 20
+            
+            scaled_pixmap = pixmap.scaled(
+                available_width, available_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            
+            self.image_label.setPixmap(scaled_pixmap)
+            self.status_label.setText(f"Image loaded: {scaled_pixmap.width()}×{scaled_pixmap.height()}")
+            
+        except Exception as e:
+            print(f"Error displaying image: {e}")
+            self.status_label.setText(f"Error displaying image: {e}")
     
     def clear_image(self):
         """Clear the current image"""
@@ -597,7 +681,7 @@ class HomeworkPractice(QMainWindow):
         return False
     
     def load_current_question(self):
-        """Load and display the current question"""
+        """Load and display the current question with stem if available"""
         if not self.current_questions or self.current_question_index >= len(self.current_questions):
             return
         
@@ -613,23 +697,31 @@ class HomeworkPractice(QMainWindow):
         # Check if question has a stem
         stem_id = question_data.get('stem')
         self.current_stem_id = stem_id
+        
+        # Load both stem and question images
+        stem_pixmap = None
+        question_pixmap = None
+        
         if stem_id:
             stem_data = self.links_data.get('questions', {}).get(stem_id, {})
             if stem_data.get('isStem'):
                 self.stem_label.setText(f"Stem: {stem_id}")
-                # Always show the question, not the stem
-                self.load_question_image(question_id, "Question")
-                self.showing_stem = False
+                stem_pixmap = self.extract_question_image(stem_id)
                 self.show_stem_btn.setEnabled(True)
-                self.show_stem_btn.setText("Show Stem")
+                self.show_stem_btn.setText("Show Stem Only")
             else:
                 self.stem_label.setText("Stem: Invalid stem reference")
-                self.load_question_image(question_id, "Question")
                 self.show_stem_btn.setEnabled(False)
         else:
             self.stem_label.setText("Stem: None")
-            self.load_question_image(question_id, "Question")
             self.show_stem_btn.setEnabled(False)
+        
+        # Always load the question image
+        question_pixmap = self.extract_question_image(question_id)
+        
+        # Display combined images
+        self.image_viewer.display_combined_images(stem_pixmap, question_pixmap)
+        self.viewer_title.setText(f"Question: {question_id}")
         
         # Update button states
         self.show_answer_btn.setEnabled(True)
@@ -669,8 +761,8 @@ class HomeworkPractice(QMainWindow):
                 }
             """)
     
-    def load_question_image(self, question_id, image_type):
-        """Load and display the perfectly cut out image for a question or stem"""
+    def extract_question_image(self, question_id):
+        """Extract the perfectly cut out image for a question or stem and return as QPixmap"""
         try:
             # Find the question in PDF pairs data
             for pair_id, pair_data in self.pdf_pairs_data.get('pairs', {}).items():
@@ -689,7 +781,7 @@ class HomeworkPractice(QMainWindow):
                                 
                                 if 'x1' in coords:
                                     # New format with absolute coordinates
-                                    success = self.image_viewer.extract_perfect_region(
+                                    return self.image_viewer.extract_perfect_region(
                                         int(page_num), 
                                         coords['x1'], coords['y1'], 
                                         coords['x2'], coords['y2']
@@ -703,13 +795,9 @@ class HomeworkPractice(QMainWindow):
                                     x2 = x1 + (coords['width'] * page_width)
                                     y2 = y1 + (coords['height'] * page_height)
                                     
-                                    success = self.image_viewer.extract_perfect_region(
+                                    return self.image_viewer.extract_perfect_region(
                                         int(page_num), x1, y1, x2, y2
                                     )
-                                
-                                if success:
-                                    self.viewer_title.setText(f"{image_type}: {question_id}")
-                                    return
                 
                 # Search in PDF2 (answers)
                 for page_num, page_annotations in pdf2_annotations.items():
@@ -723,7 +811,7 @@ class HomeworkPractice(QMainWindow):
                                 
                                 if 'x1' in coords:
                                     # New format with absolute coordinates
-                                    success = self.image_viewer.extract_perfect_region(
+                                    return self.image_viewer.extract_perfect_region(
                                         int(page_num), 
                                         coords['x1'], coords['y1'], 
                                         coords['x2'], coords['y2']
@@ -737,32 +825,27 @@ class HomeworkPractice(QMainWindow):
                                     x2 = x1 + (coords['width'] * page_width)
                                     y2 = y1 + (coords['height'] * page_height)
                                     
-                                    success = self.image_viewer.extract_perfect_region(
+                                    return self.image_viewer.extract_perfect_region(
                                         int(page_num), x1, y1, x2, y2
                                     )
-                                
-                                if success:
-                                    self.viewer_title.setText(f"{image_type}: {question_id}")
-                                    return
             
             # If we get here, question wasn't found
-            self.viewer_title.setText(f"Question not found: {question_id}")
-            self.image_viewer.clear_image()
+            print(f"Question not found: {question_id}")
+            return None
             
         except Exception as e:
-            print(f"Error loading question image: {e}")
-            self.viewer_title.setText(f"Error loading image")
-            self.image_viewer.clear_image()
+            print(f"Error extracting question image: {e}")
+            return None
     
-    def load_answer_image(self, question_id):
-        """Load and display the perfectly cut out answer image for a question"""
+    def extract_answer_image(self, question_id):
+        """Extract the perfectly cut out answer image for a question and return as QPixmap"""
         try:
             question_data = self.links_data.get('questions', {}).get(question_id, {})
             answer_id = question_data.get('answer')
             
             if not answer_id:
-                QMessageBox.information(self, "No Answer", "This question has no answer linked to it.")
-                return
+                print(f"No answer linked to question: {question_id}")
+                return None
             
             # Find the answer in PDF pairs data
             for pair_id, pair_data in self.pdf_pairs_data.get('pairs', {}).items():
@@ -781,7 +864,7 @@ class HomeworkPractice(QMainWindow):
                                 
                                 if 'x1' in coords:
                                     # New format with absolute coordinates
-                                    success = self.image_viewer.extract_perfect_region(
+                                    return self.image_viewer.extract_perfect_region(
                                         int(page_num), 
                                         coords['x1'], coords['y1'], 
                                         coords['x2'], coords['y2']
@@ -795,13 +878,9 @@ class HomeworkPractice(QMainWindow):
                                     x2 = x1 + (coords['width'] * page_width)
                                     y2 = y1 + (coords['height'] * page_height)
                                     
-                                    success = self.image_viewer.extract_perfect_region(
+                                    return self.image_viewer.extract_perfect_region(
                                         int(page_num), x1, y1, x2, y2
                                     )
-                                
-                                if success:
-                                    self.viewer_title.setText(f"Answer: {answer_id}")
-                                    return
                 
                 # Search in PDF2 (answers)
                 for page_num, page_annotations in pdf2_annotations.items():
@@ -815,7 +894,7 @@ class HomeworkPractice(QMainWindow):
                                 
                                 if 'x1' in coords:
                                     # New format with absolute coordinates
-                                    success = self.image_viewer.extract_perfect_region(
+                                    return self.image_viewer.extract_perfect_region(
                                         int(page_num), 
                                         coords['x1'], coords['y1'], 
                                         coords['x2'], coords['y2']
@@ -829,36 +908,38 @@ class HomeworkPractice(QMainWindow):
                                     x2 = x1 + (coords['width'] * page_width)
                                     y2 = y1 + (coords['height'] * page_height)
                                     
-                                    success = self.image_viewer.extract_perfect_region(
+                                    return self.image_viewer.extract_perfect_region(
                                         int(page_num), x1, y1, x2, y2
                                     )
-                                
-                                if success:
-                                    self.viewer_title.setText(f"Answer: {answer_id}")
-                                    return
             
             # If we get here, answer wasn't found
-            QMessageBox.warning(self, "Answer Not Found", f"Could not find answer: {answer_id}")
+            print(f"Answer not found: {answer_id}")
+            return None
             
         except Exception as e:
-            print(f"Error loading answer image: {e}")
-            QMessageBox.critical(self, "Error", f"Error loading answer: {e}")
+            print(f"Error extracting answer image: {e}")
+            return None
     
     def toggle_stem_question(self):
-        """Toggle between showing stem and question"""
+        """Toggle between showing combined view and stem only"""
         if not self.current_question or not self.current_stem_id:
             return
         
         if self.showing_stem:
-            # Currently showing stem, switch to question
-            self.load_question_image(self.current_question, "Question")
-            self.show_stem_btn.setText("Show Stem")
+            # Currently showing stem only, switch to combined view
+            stem_pixmap = self.extract_question_image(self.current_stem_id)
+            question_pixmap = self.extract_question_image(self.current_question)
+            self.image_viewer.display_combined_images(stem_pixmap, question_pixmap)
+            self.show_stem_btn.setText("Show Stem Only")
             self.showing_stem = False
+            self.viewer_title.setText(f"Question: {self.current_question}")
         else:
-            # Currently showing question, switch to stem
-            self.load_question_image(self.current_stem_id, "Stem")
-            self.show_stem_btn.setText("Show Question")
+            # Currently showing combined view, switch to stem only
+            stem_pixmap = self.extract_question_image(self.current_stem_id)
+            self.image_viewer.display_single_image(stem_pixmap)
+            self.show_stem_btn.setText("Show Combined")
             self.showing_stem = True
+            self.viewer_title.setText(f"Stem: {self.current_stem_id}")
     
     def toggle_answer(self):
         """Toggle between showing question and answer"""
@@ -872,9 +953,14 @@ class HomeworkPractice(QMainWindow):
             self.showing_answer = False
         else:
             # Currently showing question, switch to answer
-            self.load_answer_image(self.current_question)
-            self.show_answer_btn.setText("Show Question")
-            self.showing_answer = True
+            answer_pixmap = self.extract_answer_image(self.current_question)
+            if answer_pixmap:
+                self.image_viewer.display_single_image(answer_pixmap)
+                self.show_answer_btn.setText("Show Question")
+                self.showing_answer = True
+                self.viewer_title.setText(f"Answer: {self.current_question}")
+            else:
+                QMessageBox.warning(self, "Answer Not Found", "Could not find answer image.")
     
     def mark_for_help(self):
         """Mark current question for help"""
