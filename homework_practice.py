@@ -167,6 +167,7 @@ class HomeworkPractice(QMainWindow):
         self.current_question_index = 0
         self.current_question = None
         self.showing_answer = False
+        self.random_order = True  # Default to random order
         
         # File paths
         self.pdf_pairs_file = "pdf_pairs.json"
@@ -386,6 +387,24 @@ class HomeworkPractice(QMainWindow):
         """)
         actions_layout.addWidget(self.new_session_btn)
         
+        self.order_toggle_btn = QPushButton("Random Order ✓")
+        self.order_toggle_btn.clicked.connect(self.toggle_order)
+        self.order_toggle_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6f42c1;
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #5a32a3;
+            }
+        """)
+        actions_layout.addWidget(self.order_toggle_btn)
+        
         self.help_review_btn = QPushButton("Help Review")
         self.help_review_btn.clicked.connect(self.show_help_review)
         self.help_review_btn.setStyleSheet("""
@@ -478,22 +497,27 @@ class HomeworkPractice(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error loading data: {e}")
     
     def setup_practice_session(self):
-        """Set up a new randomized practice session"""
+        """Set up a new practice session with valid questions only"""
         try:
-            # Get all question IDs from links.json (same way as counter in homework_app)
-            questions = []
+            # Get all question IDs from links.json and validate them
+            valid_questions = []
             for question_id, question_data in self.links_data.get('questions', {}).items():
                 # Only include questions that have answers (not stems)
                 if question_data.get('answer') and not question_data.get('isStem'):
-                    questions.append(question_id)
+                    answer_id = question_data.get('answer')
+                    # Check if both question and answer exist in PDF pairs data
+                    if (self.question_exists_in_pdfs(question_id) and 
+                        self.answer_exists_in_pdfs(answer_id)):
+                        valid_questions.append(question_id)
             
-            if not questions:
-                QMessageBox.information(self, "No Questions", "No questions with answers found in links.json")
+            if not valid_questions:
+                QMessageBox.information(self, "No Valid Questions", "No questions with answers and valid PDF data found.")
                 return
             
-            # Shuffle questions
-            self.current_questions = questions.copy()
-            random.shuffle(self.current_questions)
+            # Set questions based on order preference
+            self.current_questions = valid_questions.copy()
+            if self.random_order:
+                random.shuffle(self.current_questions)
             
             # Reset session
             self.current_question_index = 0
@@ -504,10 +528,49 @@ class HomeworkPractice(QMainWindow):
             self.update_question_counter()
             self.load_current_question()
             
-            self.status_label.setText(f"New practice session started with {len(questions)} questions")
+            order_type = "randomized" if self.random_order else "structured"
+            self.status_label.setText(f"New {order_type} session started with {len(valid_questions)} valid questions")
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error setting up practice session: {e}")
+    
+    def question_exists_in_pdfs(self, question_id):
+        """Check if a question exists in the PDF pairs data"""
+        for pair_id, pair_data in self.pdf_pairs_data.get('pairs', {}).items():
+            pdf1_annotations = pair_data.get('pdf1_annotations', {})
+            pdf2_annotations = pair_data.get('pdf2_annotations', {})
+            
+            # Search in both PDFs
+            for page_annotations in pdf1_annotations.values():
+                for ann in page_annotations:
+                    if ann.get('selection_id') == question_id:
+                        return True
+            
+            for page_annotations in pdf2_annotations.values():
+                for ann in page_annotations:
+                    if ann.get('selection_id') == question_id:
+                        return True
+        
+        return False
+    
+    def answer_exists_in_pdfs(self, answer_id):
+        """Check if an answer exists in the PDF pairs data"""
+        for pair_id, pair_data in self.pdf_pairs_data.get('pairs', {}).items():
+            pdf1_annotations = pair_data.get('pdf1_annotations', {})
+            pdf2_annotations = pair_data.get('pdf2_annotations', {})
+            
+            # Search in both PDFs
+            for page_annotations in pdf1_annotations.values():
+                for ann in page_annotations:
+                    if ann.get('selection_id') == answer_id:
+                        return True
+            
+            for page_annotations in pdf2_annotations.values():
+                for ann in page_annotations:
+                    if ann.get('selection_id') == answer_id:
+                        return True
+        
+        return False
     
     def load_current_question(self):
         """Load and display the current question"""
@@ -856,6 +919,60 @@ class HomeworkPractice(QMainWindow):
             self.load_current_question()
             self.show_answer_btn.setText("Show Answer")
             self.showing_answer = False
+    
+    def toggle_order(self):
+        """Toggle between random and structured order"""
+        self.random_order = not self.random_order
+        
+        if self.random_order:
+            self.order_toggle_btn.setText("Random Order ✓")
+            self.order_toggle_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #6f42c1;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #5a32a3;
+                }
+            """)
+        else:
+            self.order_toggle_btn.setText("Structured Order ✓")
+            self.order_toggle_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #fd7e14;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #e8690b;
+                }
+            """)
+        
+        # If we have questions, reorder them
+        if self.current_questions:
+            if self.random_order:
+                random.shuffle(self.current_questions)
+            else:
+                # Sort back to original order (as they appear in links.json)
+                all_questions = list(self.links_data.get('questions', {}).keys())
+                self.current_questions.sort(key=lambda x: all_questions.index(x) if x in all_questions else len(all_questions))
+            
+            # Reset to first question
+            self.current_question_index = 0
+            self.update_question_counter()
+            self.load_current_question()
+            
+            order_type = "randomized" if self.random_order else "structured"
+            self.status_label.setText(f"Switched to {order_type} order")
     
     def update_question_counter(self):
         """Update the question counter display"""
