@@ -15,7 +15,7 @@ import fitz  # PyMuPDF
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QScrollArea, QStatusBar, 
-    QGraphicsView, QGraphicsScene, QGraphicsRectItem, QListWidget,
+    QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsItem, QListWidget,
     QListWidgetItem, QMessageBox, QLineEdit, QDialog, QDialogButtonBox,
     QFormLayout, QFrame, QTextEdit
 )
@@ -71,8 +71,8 @@ class SelectableRect(QGraphicsRectItem):
         self.page_widget = page_widget  # Reference to the page widget for notifications
         self.selection_id = None  # Unique selection ID
         self.page_index = None    # Page index where this selection exists
-        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsMovable, False)
-        self.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
         
         # NEW: Add support for temporary highlighting
         self.is_linked = False
@@ -296,8 +296,12 @@ class PDFPage(QGraphicsView):
             rel_width = abs_width / self.page_width if self.page_width > 0 else 0
             rel_height = abs_height / self.page_height if self.page_height > 0 else 0
             
-            # Generate unique Selection ID based on coordinates and page
-            selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
+            # Use existing selection_id if available, otherwise generate and store it
+            if hasattr(annotation, 'selection_id') and annotation.selection_id:
+                selection_id = annotation.selection_id
+            else:
+                selection_id = self.generate_selection_id(rel_x, rel_y, rel_width, rel_height, self.index)
+                annotation.selection_id = selection_id
             
             annotations_data.append({
                 'selection_id': selection_id,
@@ -1054,8 +1058,7 @@ class PDFViewer(QWidget):
         for page_widget in self.page_widgets:
             page_widget.ensure_selection_ids()
         
-        # Update visual states after pages are displayed
-        QTimer.singleShot(100, self.update_visual_states)
+        # Visual states will be updated by the parent app when needed
 
     def update_page_counter_label(self):
         total = len(self.page_widgets)
@@ -3540,7 +3543,8 @@ class DualPDFViewerApp(QMainWindow):
         self.save_links_data()
         
         # Update visual states
-        self.update_visual_states()
+        if hasattr(self, 'parent_app') and self.parent_app:
+            self.parent_app.update_visual_states()
         
         # Status
         self.status_bar.showMessage(f"Removed question {selection_id} from stem {stem_id}")
