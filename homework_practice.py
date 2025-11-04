@@ -590,6 +590,7 @@ class HomeworkPractice(QMainWindow):
                 border: 2px solid #dee2e6;
                 border-radius: 4px;
                 background-color: white;
+                color: #212529;
             }
             QLineEdit:focus {
                 border-color: #0078d4;
@@ -1586,6 +1587,7 @@ class HelpReviewDialog(QDialog):
                 border-radius: 4px;
                 padding: 8px;
                 background-color: #fff3cd;
+                color: #212529;
             }
         """)
         layout.addWidget(self.help_note_display)
