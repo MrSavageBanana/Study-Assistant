@@ -254,11 +254,13 @@ class HomeworkPractice(QMainWindow):
         self.showing_stem = False
         self.current_stem_id = None
         self.random_order = True  # Default to random order
-        
+        self.filter_completed = False  # Default to showing all questions
+
         # File paths
         self.pdf_pairs_file = "pdf_pairs.json"
         self.links_file = "links.json"
         self.help_file = "help.json"
+        self.completed_file = "completed.json"
         
         self.init_ui()
         self.load_data()
@@ -455,6 +457,28 @@ class HomeworkPractice(QMainWindow):
         """)
         actions_layout.addWidget(self.help_btn)
         
+        self.complete_btn = QPushButton("Mark Complete")
+        self.complete_btn.clicked.connect(self.mark_complete)
+        self.complete_btn.setEnabled(False)
+        self.complete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #5a6268;
+            }
+            QPushButton:disabled {
+                background-color: #adb5bd;
+            }
+        """)
+        actions_layout.addWidget(self.complete_btn)
+        
         self.show_stem_btn = QPushButton("Show Stem")
         self.show_stem_btn.clicked.connect(self.toggle_stem_question)
         self.show_stem_btn.setEnabled(False)
@@ -531,6 +555,24 @@ class HomeworkPractice(QMainWindow):
         """)
         actions_layout.addWidget(self.help_review_btn)
         
+        self.filter_completed_btn = QPushButton("Show All Questions ✓")
+        self.filter_completed_btn.clicked.connect(self.toggle_filter_completed)
+        self.filter_completed_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #343a40;
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #23272b;
+            }
+        """)
+        actions_layout.addWidget(self.filter_completed_btn)
+
         actions_group.setLayout(actions_layout)
         left_layout.addWidget(actions_group)
         
@@ -600,7 +642,12 @@ class HomeworkPractice(QMainWindow):
                 print(f"Loaded {len(self.help_data.get('help', {}))} help entries")
             else:
                 self.help_data = {"help": {}}
-            
+            if os.path.exists(self.completed_file):
+                with open(self.completed_file, 'r') as f:
+                    self.completed_data = json.load(f)
+                print(f"Loaded {len(self.completed_data.get('completed', []))} completed questions")
+            else:
+                self.completed_data = {"completed": []}
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error loading data: {e}")
     
@@ -621,6 +668,14 @@ class HomeworkPractice(QMainWindow):
             if not valid_questions:
                 QMessageBox.information(self, "No Valid Questions", "No questions with answers and valid PDF data found.")
                 return
+                        # Filter out completed questions if filter is enabled
+            if self.filter_completed:
+                completed_list = self.completed_data.get('completed', [])
+                valid_questions = [q for q in valid_questions if q not in completed_list]
+                
+                if not valid_questions:
+                    QMessageBox.information(self, "All Complete", "All questions are marked as complete!")
+                    return
             
             # Set questions based on order preference
             self.current_questions = valid_questions.copy()
@@ -726,6 +781,7 @@ class HomeworkPractice(QMainWindow):
         # Update button states
         self.show_answer_btn.setEnabled(True)
         self.help_btn.setEnabled(True)
+        self.complete_btn.setEnabled(True)  # <-- Add this line
         
         # Check if question is marked for help
         if question_id in self.help_data.get('help', {}):
@@ -760,7 +816,42 @@ class HomeworkPractice(QMainWindow):
                     background-color: #e0a800;
                 }
             """)
-    
+
+        # Check if question is marked as complete
+        completed_list = self.completed_data.get('completed', [])
+        if question_id in completed_list:
+            self.complete_btn.setText("Complete ✓")
+            self.complete_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #28a745;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #218838;
+                }
+            """)
+        else:
+            self.complete_btn.setText("Mark Complete")
+            self.complete_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #6c757d;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #5a6268;
+                }
+            """)
+       
     def extract_question_image(self, question_id):
         """Extract the perfectly cut out image for a question or stem and return as QPixmap"""
         try:
@@ -1023,6 +1114,106 @@ class HomeworkPractice(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error saving help data: {e}")
     
+    def mark_complete(self):
+        """Mark current question as complete or incomplete"""
+        if not self.current_question:
+            return
+        
+        completed_list = self.completed_data.get('completed', [])
+        
+        if self.current_question in completed_list:
+            # Remove from completed
+            completed_list.remove(self.current_question)
+            self.complete_btn.setText("Mark Complete")
+            self.complete_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #6c757d;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #5a6268;
+                }
+            """)
+            self.status_label.setText("Marked as incomplete")
+        else:
+            # Add to completed
+            completed_list.append(self.current_question)
+            self.complete_btn.setText("Complete ✓")
+            self.complete_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #28a745;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #218838;
+                }
+            """)
+            self.status_label.setText("Marked as complete")
+        
+        self.completed_data['completed'] = completed_list
+        self.save_completed_data()
+    
+    def save_completed_data(self):
+        """Save completed data to JSON file"""
+        try:
+            with open(self.completed_file, 'w') as f:
+                json.dump(self.completed_data, f, indent=2)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error saving completed data: {e}")
+    
+    def toggle_filter_completed(self):
+        """Toggle between showing all questions and hiding completed ones"""
+        self.filter_completed = not self.filter_completed
+        
+        if self.filter_completed:
+            self.filter_completed_btn.setText("Hide Completed ✓")
+            self.filter_completed_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #28a745;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #218838;
+                }
+            """)
+        else:
+            self.filter_completed_btn.setText("Show All Questions ✓")
+            self.filter_completed_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #343a40;
+                    color: white;
+                    border: none;
+                    padding: 12px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #23272b;
+                }
+            """)
+        
+        self.setup_practice_session()
+        filter_type = "completed questions hidden" if self.filter_completed else "all questions shown"
+        self.status_label.setText(f"Filter updated: {filter_type}")
+    
+
+
     def show_help_review(self):
         """Show the help review dialog"""
         help_questions = list(self.help_data.get('help', {}).keys())
