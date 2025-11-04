@@ -255,13 +255,17 @@ class HomeworkPractice(QMainWindow):
         self.current_stem_id = None
         self.random_order = True  # Default to random order
         self.filter_completed = False  # Default to showing all questions
+        self.current_session_id = None
+        self.sessions_data = {}
+        self.original_session_order = []  # Store original order for toggling
 
         # File paths
         self.pdf_pairs_file = "pdf_pairs.json"
         self.links_file = "links.json"
         self.help_file = "help.json"
         self.completed_file = "completed.json"
-        
+        self.sessions_file = "ids.json"
+
         self.init_ui()
         self.load_data()
         self.setup_practice_session()
@@ -572,6 +576,58 @@ class HomeworkPractice(QMainWindow):
             }
         """)
         actions_layout.addWidget(self.filter_completed_btn)
+                # Session ID input section
+        session_layout = QVBoxLayout()
+        session_label = QLabel("Session ID:")
+        session_label.setStyleSheet("font-weight: bold; color: #333; padding: 5px;")
+        session_layout.addWidget(session_label)
+        
+        self.session_id_input = QLineEdit()
+        self.session_id_input.setPlaceholderText("Enter session ID to load...")
+        self.session_id_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                border: 2px solid #dee2e6;
+                border-radius: 4px;
+                background-color: white;
+            }
+            QLineEdit:focus {
+                border-color: #0078d4;
+            }
+        """)
+        session_layout.addWidget(self.session_id_input)
+        
+        self.load_session_btn = QPushButton("Load Session")
+        self.load_session_btn.clicked.connect(self.load_session_by_id)
+        self.load_session_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #17a2b8;
+                color: white;
+                border: none;
+                padding: 10px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #138496;
+            }
+        """)
+        session_layout.addWidget(self.load_session_btn)
+        
+        self.current_session_label = QLabel("Current Session: None")
+        self.current_session_label.setStyleSheet("""
+            color: #0078d4; 
+            font-weight: bold; 
+            padding: 5px;
+            background-color: white;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        """)
+        self.current_session_label.setWordWrap(True)
+        session_layout.addWidget(self.current_session_label)
+        
+        actions_layout.addLayout(session_layout)
 
         actions_group.setLayout(actions_layout)
         left_layout.addWidget(actions_group)
@@ -648,6 +704,14 @@ class HomeworkPractice(QMainWindow):
                 print(f"Loaded {len(self.completed_data.get('completed', []))} completed questions")
             else:
                 self.completed_data = {"completed": []}
+
+            # Load sessions data
+            if os.path.exists(self.sessions_file):
+                with open(self.sessions_file, 'r') as f:
+                    self.sessions_data = json.load(f)
+                print(f"Loaded {len(self.sessions_data.get('sessions', {}))} saved sessions")
+            else:
+                self.sessions_data = {"sessions": {}}
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error loading data: {e}")
     
@@ -681,7 +745,30 @@ class HomeworkPractice(QMainWindow):
             self.current_questions = valid_questions.copy()
             if self.random_order:
                 random.shuffle(self.current_questions)
-            
+                self.original_session_order = self.current_questions.copy()  # Save original random order
+                
+                # Generate unique session ID and save order
+                import time
+                session_id = f"session_{int(time.time())}_{random.randint(1000, 9999)}"
+                self.current_session_id = session_id
+                
+                # Save session to ids.json
+                if 'sessions' not in self.sessions_data:
+                    self.sessions_data['sessions'] = {}
+                
+                self.sessions_data['sessions'][session_id] = {
+                    'question_order': self.current_questions.copy(),
+                    'created': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'total_questions': len(self.current_questions),
+                    'filter_completed': self.filter_completed
+                }
+                
+                self.save_sessions_data()
+                self.current_session_label.setText(f"Current Session: {session_id}")
+            else:
+                self.current_session_id = None
+                self.current_session_label.setText("Current Session: None (Structured)")
+
             # Reset session
             self.current_question_index = 0
             self.current_question = None
@@ -1170,6 +1257,71 @@ class HomeworkPractice(QMainWindow):
                 json.dump(self.completed_data, f, indent=2)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error saving completed data: {e}")
+    def save_sessions_data(self):
+        """Save sessions data to JSON file"""
+        try:
+            with open(self.sessions_file, 'w') as f:
+                json.dump(self.sessions_data, f, indent=2)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error saving sessions data: {e}")
+    
+    def load_session_by_id(self):
+        """Load a saved session by its ID"""
+        session_id = self.session_id_input.text().strip()
+        
+        if not session_id:
+            QMessageBox.warning(self, "No Session ID", "Please enter a session ID to load.")
+            return
+        
+        sessions = self.sessions_data.get('sessions', {})
+        
+        if session_id not in sessions:
+            QMessageBox.warning(self, "Session Not Found", f"Session ID '{session_id}' not found.")
+            return
+        
+        try:
+            session_data = sessions[session_id]
+            question_order = session_data.get('question_order', [])
+            
+            if not question_order:
+                QMessageBox.warning(self, "Empty Session", "This session has no questions.")
+                return
+            
+            # Apply current filter settings to the saved order
+            if self.filter_completed:
+                completed_list = self.completed_data.get('completed', [])
+                self.current_questions = [q for q in question_order if q not in completed_list]
+            else:
+                self.current_questions = question_order.copy()
+            # Save original order for toggling
+            self.original_session_order = self.current_questions.copy()
+            
+            if not self.current_questions:
+                QMessageBox.information(self, "All Complete", "All questions in this session are marked as complete!")
+                return
+            
+            # Set current session
+            self.current_session_id = session_id
+            self.current_session_label.setText(f"Current Session: {session_id}")
+            
+            # Reset session state
+            self.current_question_index = 0
+            self.current_question = None
+            self.showing_answer = False
+            
+            # Update UI
+            self.update_question_counter()
+            self.load_current_question()
+            
+            created = session_data.get('created', 'Unknown')
+            total = session_data.get('total_questions', len(question_order))
+            self.status_label.setText(f"Loaded session from {created} ({len(self.current_questions)}/{total} questions)")
+            
+            # Clear the input field
+            self.session_id_input.clear()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error loading session: {e}")
     
     def toggle_filter_completed(self):
         """Toggle between showing all questions and hiding completed ones"""
@@ -1247,9 +1399,52 @@ class HomeworkPractice(QMainWindow):
     
     def toggle_order(self):
         """Toggle between random and structured order"""
+        if not self.current_questions or not self.original_session_order:
+            # No active session, just toggle preference
+            self.random_order = not self.random_order
+            
+            if self.random_order:
+                self.order_toggle_btn.setText("Random Order ✓")
+                self.order_toggle_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #6f42c1;
+                        color: white;
+                        border: none;
+                        padding: 12px;
+                        border-radius: 6px;
+                        font-weight: bold;
+                        margin: 5px;
+                    }
+                    QPushButton:hover {
+                        background-color: #5a32a3;
+                    }
+                """)
+                self.status_label.setText("Next session will use random order")
+            else:
+                self.order_toggle_btn.setText("Structured Order ✓")
+                self.order_toggle_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #fd7e14;
+                        color: white;
+                        border: none;
+                        padding: 12px;
+                        border-radius: 6px;
+                        font-weight: bold;
+                        margin: 5px;
+                    }
+                    QPushButton:hover {
+                        background-color: #e8690b;
+                    }
+                """)
+                self.status_label.setText("Next session will use structured order")
+            return
+        
+        # Toggle between current session's random order and structured order
         self.random_order = not self.random_order
         
         if self.random_order:
+            # Switch back to original random order
+            self.current_questions = self.original_session_order.copy()
             self.order_toggle_btn.setText("Random Order ✓")
             self.order_toggle_btn.setStyleSheet("""
                 QPushButton {
@@ -1265,7 +1460,11 @@ class HomeworkPractice(QMainWindow):
                     background-color: #5a32a3;
                 }
             """)
+            self.status_label.setText("Switched back to original random order")
         else:
+            # Switch to structured order
+            all_questions = list(self.links_data.get('questions', {}).keys())
+            self.current_questions.sort(key=lambda x: all_questions.index(x) if x in all_questions else len(all_questions))
             self.order_toggle_btn.setText("Structured Order ✓")
             self.order_toggle_btn.setStyleSheet("""
                 QPushButton {
@@ -1281,24 +1480,12 @@ class HomeworkPractice(QMainWindow):
                     background-color: #e8690b;
                 }
             """)
+            self.status_label.setText("Switched to structured order")
         
-        # If we have questions, reorder them
-        if self.current_questions:
-            if self.random_order:
-                random.shuffle(self.current_questions)
-            else:
-                # Sort back to original order (as they appear in links.json)
-                all_questions = list(self.links_data.get('questions', {}).keys())
-                self.current_questions.sort(key=lambda x: all_questions.index(x) if x in all_questions else len(all_questions))
-            
-            # Reset to first question
-            self.current_question_index = 0
-            self.update_question_counter()
-            self.load_current_question()
-            
-            order_type = "randomized" if self.random_order else "structured"
-            self.status_label.setText(f"Switched to {order_type} order")
-    
+        # Reset to first question
+        self.current_question_index = 0
+        self.update_question_counter()
+        self.load_current_question()
     def update_question_counter(self):
         """Update the question counter display"""
         total = len(self.current_questions)
