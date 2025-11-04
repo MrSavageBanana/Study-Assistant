@@ -385,7 +385,7 @@ class PDFPage(QGraphicsView):
 
     def mousePressEvent(self, event: QMouseEvent):
         app = self.window()
-        if app.auto_teleport_mode and int(self.owner.viewer_id) != app.current_active_viewer:
+        if app and hasattr(app, 'auto_teleport_mode') and app.auto_teleport_mode and hasattr(app, 'current_active_viewer') and int(self.owner.viewer_id) != app.current_active_viewer:
             return
 
         if self.owner:
@@ -460,7 +460,7 @@ class PDFPage(QGraphicsView):
 
     def mouseMoveEvent(self, event: QMouseEvent):
         app = self.window()
-        if app.auto_teleport_mode and int(self.owner.viewer_id) != app.current_active_viewer:
+        if app and hasattr(app, 'auto_teleport_mode') and app.auto_teleport_mode and hasattr(app, 'current_active_viewer') and int(self.owner.viewer_id) != app.current_active_viewer:
             return
 
         scene_pos = self.mapToScene(event.pos())
@@ -508,7 +508,7 @@ class PDFPage(QGraphicsView):
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         app = self.window()
-        if app.auto_teleport_mode and int(self.owner.viewer_id) != app.current_active_viewer:
+        if app and hasattr(app, 'auto_teleport_mode') and app.auto_teleport_mode and hasattr(app, 'current_active_viewer') and int(self.owner.viewer_id) != app.current_active_viewer:
             return
 
         if self.drawing and self.temp_rect:
@@ -578,7 +578,7 @@ class PDFPage(QGraphicsView):
 
     def keyPressEvent(self, event):
         app = self.window()
-        if app.auto_teleport_mode and int(self.owner.viewer_id) != app.current_active_viewer:
+        if app and hasattr(app, 'auto_teleport_mode') and app.auto_teleport_mode and hasattr(app, 'current_active_viewer') and int(self.owner.viewer_id) != app.current_active_viewer:
             return
 
         if event.key() == Qt.Key.Key_Delete and self.selected_rect:
@@ -2792,10 +2792,8 @@ class DualPDFViewerApp(QMainWindow):
         pass  # Removed
     
     def on_selection_changed(self):
-        """Called when selection changes - updates link screen button state"""
-        # Update link screen button state if it exists
-        if hasattr(self, 'link_screen') and hasattr(self.link_screen, 'update_mark_stem_button_state'):
-            self.link_screen.update_mark_stem_button_state()
+        """Called when selection changes"""
+        pass
 
     def switch_active_viewer(self):
         """Switch to the other PDF viewer"""
@@ -3673,6 +3671,10 @@ class DualPDFViewerApp(QMainWindow):
     
     def auto_select_linked_selection(self, selected_annotation, current_viewer_id):
         """Auto-select the linked selection in the other viewer"""
+        # Prevent infinite recursion
+        if hasattr(self, '_in_auto_select') and self._in_auto_select:
+            return
+        
         if not hasattr(selected_annotation, 'selection_id') or not selected_annotation.selection_id:
             return
         
@@ -3693,8 +3695,12 @@ class DualPDFViewerApp(QMainWindow):
                     break
         
         if linked_selection_id:
-            # Find and select the linked annotation
-            self.select_linked_annotation(target_viewer, linked_selection_id)
+            # Set flag to prevent recursion
+            self._in_auto_select = True
+            try:
+                self.select_linked_annotation(target_viewer, linked_selection_id)
+            finally:
+                self._in_auto_select = False
     
     def select_linked_annotation(self, target_viewer, selection_id):
         """Navigate to and select a specific annotation in the target viewer"""
