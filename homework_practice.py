@@ -1505,6 +1505,7 @@ class HelpReviewDialog(QDialog):
         self.help_questions = help_questions
         self.help_data = help_data
         self.current_index = 0
+        self.parent_window = parent
         
         self.setWindowTitle("Help Review")
         self.setModal(True)
@@ -1568,6 +1569,11 @@ class HelpReviewDialog(QDialog):
         
         layout.addLayout(nav_layout)
         
+        # Image viewer
+        self.image_viewer = PerfectImageViewer()
+        self.image_viewer.setMaximumHeight(400)
+        layout.addWidget(self.image_viewer)
+
         # Question info
         self.help_question_id = QLabel("Question ID: None")
         self.help_question_id.setStyleSheet("font-weight: bold; padding: 10px; background-color: #f8f9fa; border-radius: 4px;")
@@ -1643,7 +1649,13 @@ class HelpReviewDialog(QDialog):
         
         self.help_question_id.setText(f"Question ID: {question_id}")
         self.help_note_display.setPlainText(note)
-        
+            
+        # Load question image
+        if self.parent_window:
+            question_pixmap = self.parent_window.extract_question_image(question_id)
+            if question_pixmap:
+                self.image_viewer.display_single_image(question_pixmap)
+                
         # Update counter
         total = len(self.help_questions)
         current = self.current_index + 1
