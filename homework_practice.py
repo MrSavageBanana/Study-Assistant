@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QTextEdit, QScrollArea, QMessageBox, 
     QListWidget, QListWidgetItem, QDialog, QDialogButtonBox,
     QFormLayout, QLineEdit, QFrame, QSplitter, QGroupBox,
-    QGridLayout, QSizePolicy
+    QGridLayout, QSizePolicy, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QPixmap, QImage, QFont, QPalette, QColor, QPainter
@@ -56,6 +56,82 @@ class HelpNoteDialog(QDialog):
     
     def get_note(self):
         return self.note_edit.toPlainText().strip()
+
+class PageRangeDialog(QDialog):
+    """Dialog for selecting page range to filter questions"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Filter by Page Range")
+        self.setModal(True)
+        self.resize(400, 200)
+        
+        layout = QVBoxLayout()
+        
+        # Instructions
+        info_label = QLabel("Filter questions by page number in the Question PDF:")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("font-size: 12px; color: #666; margin-bottom: 10px;")
+        layout.addWidget(info_label)
+        
+        # Page range inputs
+        form_layout = QFormLayout()
+        
+        self.start_page_input = QLineEdit()
+        self.start_page_input.setPlaceholderText("e.g., 1")
+        self.start_page_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                border: 2px solid #dee2e6;
+                border-radius: 4px;
+            }
+        """)
+        form_layout.addRow("Start Page:", self.start_page_input)
+        
+        self.end_page_input = QLineEdit()
+        self.end_page_input.setPlaceholderText("e.g., 8")
+        self.end_page_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px;
+                border: 2px solid #dee2e6;
+                border-radius: 4px;
+            }
+        """)
+        form_layout.addRow("End Page:", self.end_page_input)
+        
+        layout.addLayout(form_layout)
+        
+        # Clear filter checkbox
+        self.clear_filter_checkbox = QCheckBox("Clear page filter (show all pages)")
+        self.clear_filter_checkbox.setStyleSheet("margin: 10px 0;")
+        layout.addWidget(self.clear_filter_checkbox)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+    
+    def get_page_range(self):
+        """Return the selected page range or None if cleared"""
+        if self.clear_filter_checkbox.isChecked():
+            return None
+        
+        try:
+            start = int(self.start_page_input.text().strip())
+            end = int(self.end_page_input.text().strip())
+            
+            if start < 0 or end < 0:
+                raise ValueError("Page numbers must be positive")
+            if start > end:
+                raise ValueError("Start page must be <= end page")
+            
+            return (start, end)
+        except (ValueError, AttributeError) as e:
+            return None
 
 class PerfectImageViewer(QWidget):
     """Advanced PDF viewer for displaying perfectly cut out question/answer images"""
@@ -258,6 +334,7 @@ class HomeworkPractice(QMainWindow):
         self.current_session_id = None
         self.sessions_data = {}
         self.original_session_order = []  # Store original order for toggling
+        self.page_range_filter = None  # Add this line for page filtering
 
         # File paths
         self.pdf_pairs_file = "pdf_pairs.json"
@@ -576,6 +653,25 @@ class HomeworkPractice(QMainWindow):
             }
         """)
         actions_layout.addWidget(self.filter_completed_btn)
+
+        self.page_filter_btn = QPushButton("Filter by Pages")
+        self.page_filter_btn.clicked.connect(self.show_page_filter_dialog)
+        self.page_filter_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e83e8c;
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #d63384;
+            }
+        """)
+        actions_layout.addWidget(self.page_filter_btn)
+        
                 # Session ID input section
         session_layout = QVBoxLayout()
         session_label = QLabel("Session ID:")
@@ -728,7 +824,17 @@ class HomeworkPractice(QMainWindow):
                     # Check if both question and answer exist in PDF pairs data
                     if (self.question_exists_in_pdfs(question_id) and 
                         self.answer_exists_in_pdfs(answer_id)):
-                        valid_questions.append(question_id)
+                        
+                        # Apply page range filter if active
+                        if self.page_range_filter:
+                            page_num = self.get_question_page_number(question_id)
+                            if page_num is not None:
+                                start, end = self.page_range_filter
+                                if start <= page_num <= end:
+                                    valid_questions.append(question_id)
+                            # Skip if page number not found or outside range
+                        else:
+                            valid_questions.append(question_id)
             
             if not valid_questions:
                 QMessageBox.information(self, "No Valid Questions", "No questions with answers and valid PDF data found.")
@@ -1496,6 +1602,77 @@ class HomeworkPractice(QMainWindow):
         # Update navigation button states
         self.prev_btn.setEnabled(self.current_question_index > 0)
         self.next_btn.setEnabled(self.current_question_index < total - 1)
+
+    def show_page_filter_dialog(self):
+        """Show dialog to set page range filter"""
+        dialog = PageRangeDialog(self)
+        
+        # Pre-fill with current filter if exists
+        if self.page_range_filter:
+            dialog.start_page_input.setText(str(self.page_range_filter[0]))
+            dialog.end_page_input.setText(str(self.page_range_filter[1]))
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            page_range = dialog.get_page_range()
+            
+            if page_range is None and not dialog.clear_filter_checkbox.isChecked():
+                QMessageBox.warning(self, "Invalid Input", "Please enter valid page numbers or check 'Clear filter'.")
+                return
+            
+            self.page_range_filter = page_range
+            
+            # Update button text to show active filter
+            if self.page_range_filter:
+                start, end = self.page_range_filter
+                self.page_filter_btn.setText(f"Pages {start}-{end} ✓")
+                self.page_filter_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #28a745;
+                        color: white;
+                        border: none;
+                        padding: 12px;
+                        border-radius: 6px;
+                        font-weight: bold;
+                        margin: 5px;
+                    }
+                    QPushButton:hover {
+                        background-color: #218838;
+                    }
+                """)
+                self.status_label.setText(f"Page filter set: {start}-{end}")
+            else:
+                self.page_filter_btn.setText("Filter by Pages")
+                self.page_filter_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #e83e8c;
+                        color: white;
+                        border: none;
+                        padding: 12px;
+                        border-radius: 6px;
+                        font-weight: bold;
+                        margin: 5px;
+                    }
+                    QPushButton:hover {
+                        background-color: #d63384;
+                    }
+                """)
+                self.status_label.setText("Page filter cleared")
+            
+            # Restart session with new filter
+            self.setup_practice_session()
+    
+    def get_question_page_number(self, question_id):
+        """Get the page number where a question appears in the question PDF"""
+        for pair_id, pair_data in self.pdf_pairs_data.get('pairs', {}).items():
+            pdf1_annotations = pair_data.get('pdf1_annotations', {})
+            
+            # Search in question PDF (pdf1)
+            for page_num, page_annotations in pdf1_annotations.items():
+                for ann in page_annotations:
+                    if ann.get('selection_id') == question_id:
+                        return int(page_num) + 1
+        
+        return None
 
 class HelpReviewDialog(QDialog):
     """Dialog for reviewing help-marked questions"""
