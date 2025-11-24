@@ -13,4 +13,7 @@
 7. Make the JSON files not be OS specific so i can just share them
 8. allow combining of different sessions. It will request how many sessions and you can put the number then it will ask for Session 1's important files then Session's 2s, etc
 9. Make it look like libwaita with rounded corners and a specific design. Nice and GNOME with my hyprland border colors
-10. 
+10. make it hard to double click the buttons by having a slight delay where if more then one click is made in 200ms, only the first is registered
+11. add VIM Navigations shortcuts such as the following
+   - h and l for going back and forwards questions
+   - gg for going to the beginning one
