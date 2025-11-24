@@ -17,6 +17,9 @@
 11. add VIM Navigations shortcuts such as the following
    - h and l for going back and forwards questions
    - gg for going to the beginning one
+   - f for searching for a selection id
+   - F1 for seeing all keybinds(similar to Yazi)
 12. make it so i can edit a marked help without removing it
 13. make it so pressing enter after marking something as help actually works instead of requiring a mouse
 14. create a keyboard shortcut for all buttons and if you hold ctrl for Φ seconds, the shortcuts will show, similar to how it does in chatGPT but instead of showing abruptly, it will have a smooth transition to show the shortcuts
+15. have a way to delete a question (and therefore, its answer link) in case there is a mismatch and there is a question which doesn't have a correct answer for the question because that answer is for a seperate questions which isn't on the PDF. This is just one edge case that none of the other marks are appropiate
