@@ -18,3 +18,5 @@
    - h and l for going back and forwards questions
    - gg for going to the beginning one
 12. make it so i can edit a marked help without removing it
+13. make it so pressing enter after marking something as help actually works instead of requiring a mouse
+14. create a keyboard shortcut for all buttons and if you hold ctrl for Φ seconds, the shortcuts will show, similar to how it does in chatGPT but instead of showing abruptly, it will have a smooth transition to show the shortcuts
