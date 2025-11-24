@@ -17,3 +17,4 @@
 11. add VIM Navigations shortcuts such as the following
    - h and l for going back and forwards questions
    - gg for going to the beginning one
+12. make it so i can edit a marked help without removing it
