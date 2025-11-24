@@ -23,3 +23,19 @@
 13. make it so pressing enter after marking something as help actually works instead of requiring a mouse
 14. create a keyboard shortcut for all buttons and if you hold ctrl for Φ seconds, the shortcuts will show, similar to how it does in chatGPT but instead of showing abruptly, it will have a smooth transition to show the shortcuts
 15. have a way to delete a question (and therefore, its answer link) in case there is a mismatch and there is a question which doesn't have a correct answer for the question because that answer is for a seperate questions which isn't on the PDF. This is just one edge case that none of the other marks are appropiate
+16. make it always use the same seed from last time and make sure that all the buttons don't switch the seed unless you click that button
+17. make the buttons readable
+18. make a filter to only show Need Help Marked questions
+19. Make a button which has all the following filters which pops up a window with easy checkmarks which can be checked or unchecked using your number keys
+  - Only Questions With stem
+  - Only Questions without stem
+  - Only completed questions
+  - Only Questions not completed
+  - Only incorrect questions
+  - Only questions not incorrect
+  - Filter by Pages
+20. Make a bunch of little buttons to mark the questions using the following characteristics
+      - Complete
+      - Incorrect
+      - Need Help
+21. 
