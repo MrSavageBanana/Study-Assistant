@@ -40,4 +40,5 @@
       - Complete
       - Incorrect
       - Need Help
-21. 
+21. An OCR search where an OCR like tesseract will go through all of the screenshots, extract the text that it can and then when the user wants to try and search, it will open up a window with the results and the screenshot like a file preview and then pressing enter will go to that question
+
