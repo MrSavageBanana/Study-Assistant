@@ -1,7 +1,9 @@
 ## link.py
 1. the colors when you switch from Link Mode and normal don't stay the same. They all turn red and no visuals exist
 2. Add Feature where you can fullscreen a pdf to do the box creating. you could do the zooming to get it right as well
-  - remove the link session and add it's functionality to the normal one
+3. remove the link session and add it's functionality to the normal one
+4. make it so when you press the question OR the answer the other pdf scrolls automatically. This feature will no longer be exclusive to clicking answers
+5. make it so when you use the arrows to navigate questions, since they select the questions, it will show the answer automatically. This can probably be turned off in a config file or in a simple code checkbox if it was annoying but it could be genuinely useful. 
 
 ## homework.py
 1. Instead of typing the full seed, have an auto correct in the form of a placeholder as you type for you to tab. you can continue pressing tab to "scroll" through options
