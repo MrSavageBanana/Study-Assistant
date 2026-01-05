@@ -18,16 +18,16 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QTextEdit, QScrollArea, QMessageBox, 
     QListWidget, QListWidgetItem, QDialog, QDialogButtonBox,
     QFormLayout, QLineEdit, QFrame, QSplitter, QGroupBox,
-    QGridLayout, QSizePolicy, QCheckBox
+    QGridLayout, QSizePolicy, QCheckBox, QCompleter
 )
-from PyQt6.QtCore import Qt, QTimer, QSize
+from PyQt6.QtCore import Qt, QTimer, QSize, QStringListModel
 from PyQt6.QtGui import QPixmap, QImage, QFont, QPalette, QColor, QPainter
 
 class HelpNoteDialog(QDialog):
     """Dialog for adding help notes to questions"""
-    def __init__(self, question_id, parent=None):
+    def __init__(self, question_id, existing_note="", parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Add Help Note - {question_id}")
+        self.setWindowTitle(f"{'Edit' if existing_note else 'Add'} Help Note - {question_id}")
         self.setModal(True)
         self.resize(500, 300)
         
@@ -44,6 +44,8 @@ class HelpNoteDialog(QDialog):
         
         self.note_edit = QTextEdit()
         self.note_edit.setPlaceholderText("Enter your help note here...")
+        if existing_note:
+            self.note_edit.setPlainText(existing_note)
         layout.addWidget(self.note_edit)
         
         # Buttons
@@ -51,12 +53,22 @@ class HelpNoteDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
-        
+
+        # Make Tab key change focus instead of inserting tabs
+        self.note_edit.setTabChangesFocus(True)
+    
         self.setLayout(layout)
     
     def get_note(self):
         return self.note_edit.toPlainText().strip()
-
+    
+    def keyPressEvent(self, event):
+        """Handle key press events - Ctrl+Enter to accept"""
+        if event.key() == Qt.Key.Key_Return and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            self.accept()
+        else:
+            super().keyPressEvent(event)
+            
 class PageRangeDialog(QDialog):
     """Dialog for selecting page range to filter questions"""
     def __init__(self, parent=None):
@@ -132,6 +144,78 @@ class PageRangeDialog(QDialog):
             return (start, end)
         except (ValueError, AttributeError) as e:
             return None
+
+class CombineSessionsDialog(QDialog):
+    """Dialog for combining multiple sessions"""
+    def __init__(self, available_sessions, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Combine Sessions")
+        self.setModal(True)
+        self.resize(600, 500)
+        self.available_sessions = available_sessions
+        
+        layout = QVBoxLayout()
+        
+        # Title
+        title = QLabel("Combine Multiple Sessions")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #0078d4; margin: 10px;")
+        layout.addWidget(title)
+        
+        # Instructions
+        info = QLabel("Select sessions to combine. Questions will be combined in order (or shuffled if in random mode).")
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #666; margin: 10px;")
+        layout.addWidget(info)
+        
+        # Session list
+        list_label = QLabel("Available Sessions:")
+        list_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        layout.addWidget(list_label)
+        
+        self.session_list = QListWidget()
+        self.session_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        
+        # Populate with sessions sorted by date
+        sorted_sessions = sorted(
+            available_sessions.items(),
+            key=lambda x: x[1].get('created', ''),
+            reverse=True
+        )
+        
+        for session_id, session_data in sorted_sessions:
+            created = session_data.get('created', 'Unknown')
+            total = session_data.get('total_questions', 0)
+            item = QListWidgetItem(f"{session_id} - {total} questions ({created})")
+            item.setData(Qt.ItemDataRole.UserRole, session_id)
+            self.session_list.addItem(item)
+        
+        layout.addWidget(self.session_list)
+        
+        # Selected count
+        self.count_label = QLabel("Selected: 0 sessions")
+        self.count_label.setStyleSheet("color: #0078d4; font-weight: bold; margin: 5px;")
+        self.session_list.itemSelectionChanged.connect(self.update_count)
+        layout.addWidget(self.count_label)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+    
+    def update_count(self):
+        """Update the selected count label"""
+        count = len(self.session_list.selectedItems())
+        self.count_label.setText(f"Selected: {count} session{'s' if count != 1 else ''}")
+    
+    def get_selected_sessions(self):
+        """Return list of selected session IDs in order of selection"""
+        return [item.data(Qt.ItemDataRole.UserRole) for item in self.session_list.selectedItems()]
 
 class PerfectImageViewer(QWidget):
     """Advanced PDF viewer for displaying perfectly cut out question/answer images"""
@@ -342,6 +426,7 @@ class HomeworkPractice(QMainWindow):
         self.help_file = "help.json"
         self.completed_file = "completed.json"
         self.sessions_file = "ids.json"
+        self.last_session_file = "last_session.json"
 
         self.init_ui()
         self.load_data()
@@ -672,6 +757,42 @@ class HomeworkPractice(QMainWindow):
         """)
         actions_layout.addWidget(self.page_filter_btn)
         
+        self.goto_btn = QPushButton("Go to Question #")
+        self.goto_btn.clicked.connect(self.show_goto_dialog)
+        self.goto_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #007bff;
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #0056b3;
+            }
+        """)
+        actions_layout.addWidget(self.goto_btn)
+        
+        self.combine_sessions_btn = QPushButton("Combine Sessions")
+        self.combine_sessions_btn.clicked.connect(self.show_combine_sessions_dialog)
+        self.combine_sessions_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6610f2;
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin: 5px;
+            }
+            QPushButton:hover {
+                background-color: #520dc2;
+            }
+        """)
+        actions_layout.addWidget(self.combine_sessions_btn)
+   
                 # Session ID input section
         session_layout = QVBoxLayout()
         session_label = QLabel("Session ID:")
@@ -680,6 +801,14 @@ class HomeworkPractice(QMainWindow):
         
         self.session_id_input = QLineEdit()
         self.session_id_input.setPlaceholderText("Enter session ID to load...")
+        self.session_id_input.returnPressed.connect(self.load_session_by_id)
+        
+        # Setup autocomplete - will populate after data loads
+        self.session_completer = QCompleter()
+        self.session_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.session_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self.session_id_input.setCompleter(self.session_completer)
+        
         self.session_id_input.setStyleSheet("""
             QLineEdit {
                 padding: 8px;
@@ -809,11 +938,41 @@ class HomeworkPractice(QMainWindow):
                 print(f"Loaded {len(self.sessions_data.get('sessions', {}))} saved sessions")
             else:
                 self.sessions_data = {"sessions": {}}
+            
+            # Load last session ID if available
+            if os.path.exists(self.last_session_file):
+                with open(self.last_session_file, 'r') as f:
+                    last_session_data = json.load(f)
+                    last_session_id = last_session_data.get('last_session_id')
+                    if last_session_id and last_session_id in self.sessions_data.get('sessions', {}):
+                        self.session_id_input.setText(last_session_id)
+            
+            # Update autocomplete list
+            self.update_session_completer()
+            
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error loading data: {e}")
+
+    def update_session_completer(self):
+        """Update the autocomplete list with available session IDs"""
+        sessions = self.sessions_data.get('sessions', {})
+        # Sort by creation time (most recent first)
+        sorted_sessions = sorted(
+            sessions.items(),
+            key=lambda x: x[1].get('created', ''),
+            reverse=True
+        )
+        session_ids = [s[0] for s in sorted_sessions]
+        
+        model = QStringListModel(session_ids)
+        self.session_completer.setModel(model)
     
-    def setup_practice_session(self):
-        """Set up a new practice session with valid questions only"""
+    def setup_practice_session(self, preserve_session=False):
+        """Set up a new practice session with valid questions only
+        
+        Args:
+            preserve_session: If True, keeps current session and just refilters questions
+        """
         try:
             # Get all question IDs from links.json and validate them
             valid_questions = []
@@ -849,32 +1008,62 @@ class HomeworkPractice(QMainWindow):
                     return
             
             # Set questions based on order preference
-            self.current_questions = valid_questions.copy()
-            if self.random_order:
-                random.shuffle(self.current_questions)
-                self.original_session_order = self.current_questions.copy()  # Save original random order
+            if preserve_session and self.current_session_id:
+                # Preserve current session order, just filter questions
+                sessions = self.sessions_data.get('sessions', {})
+                if self.current_session_id in sessions:
+                    session_data = sessions[self.current_session_id]
+                    original_order = session_data.get('question_order', [])
+                    # Filter the original order to only include valid questions
+                    self.current_questions = [q for q in original_order if q in valid_questions]
+                    self.original_session_order = self.current_questions.copy()
+                else:
+                    # Fallback if session not found
+                    self.current_questions = valid_questions.copy()
+                    if self.random_order:
+                        random.shuffle(self.current_questions)
+                        self.original_session_order = self.current_questions.copy()
+            else:
+                self.current_questions = valid_questions.copy()
+                if self.random_order:
+                    random.shuffle(self.current_questions)
+                    self.original_session_order = self.current_questions.copy()  # Save original random order
+                    
+                    # Generate unique session ID and save order only if not preserving
                 
                 # Generate unique session ID and save order
-                import time
-                session_id = f"session_{int(time.time())}_{random.randint(1000, 9999)}"
-                self.current_session_id = session_id
-                
-                # Save session to ids.json
-                if 'sessions' not in self.sessions_data:
-                    self.sessions_data['sessions'] = {}
-                
-                self.sessions_data['sessions'][session_id] = {
-                    'question_order': self.current_questions.copy(),
-                    'created': time.strftime('%Y-%m-%d %H:%M:%S'),
-                    'total_questions': len(self.current_questions),
-                    'filter_completed': self.filter_completed
-                }
-                
-                self.save_sessions_data()
-                self.current_session_label.setText(f"Current Session: {session_id}")
-            else:
-                self.current_session_id = None
-                self.current_session_label.setText("Current Session: None (Structured)")
+                    import time
+                    session_id = f"session_{int(time.time())}_{random.randint(1000, 9999)}"
+                    self.current_session_id = session_id
+                    
+                    # Save session to ids.json only if creating new session
+                    if not preserve_session:
+                        if 'sessions' not in self.sessions_data:
+                            self.sessions_data['sessions'] = {}
+                        
+                        self.sessions_data['sessions'][session_id] = {
+                            'question_order': self.current_questions.copy(),
+                            'created': time.strftime('%Y-%m-%d %H:%M:%S'),
+                            'total_questions': len(self.current_questions),
+                            'filter_completed': self.filter_completed
+                        }
+                        
+                        self.save_sessions_data()
+                        
+                        # Save as last used session
+                        try:
+                            with open(self.last_session_file, 'w') as f:
+                                json.dump({'last_session_id': session_id}, f)
+                        except Exception as save_error:
+                            print(f"Could not save last session: {save_error}")
+                        
+                        # Update autocomplete with new session
+                        self.update_session_completer()
+                    
+                    self.current_session_label.setText(f"Current Session: {session_id}")
+                else:
+                    self.current_session_id = None
+                    self.current_session_label.setText("Current Session: None (Structured)")
 
             # Reset session
             self.current_question_index = 0
@@ -1248,55 +1437,12 @@ class HomeworkPractice(QMainWindow):
                 QMessageBox.warning(self, "Answer Not Found", "Could not find answer image.")
     
     def mark_for_help(self):
-        """Mark current question for help"""
+        """Mark current question for help or edit existing help note"""
         if not self.current_question:
             return
         
-        if self.current_question in self.help_data.get('help', {}):
-            # Remove from help
-            del self.help_data['help'][self.current_question]
-            self.help_btn.setText("Mark for Help")
-            self.help_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #ffc107;
-                    color: #212529;
-                    border: none;
-                    padding: 12px;
-                    border-radius: 6px;
-                    font-weight: bold;
-                    margin: 5px;
-                }
-                QPushButton:hover {
-                    background-color: #e0a800;
-                }
-            """)
-            self.status_label.setText("Removed from help list")
-        else:
-            # Add to help
-            dialog = HelpNoteDialog(self.current_question, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                note = dialog.get_note()
-                if note:
-                    self.help_data['help'][self.current_question] = note
-                    self.help_btn.setText("Help ✓")
-                    self.help_btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: #ff9800;
-                            color: white;
-                            border: none;
-                            padding: 12px;
-                            border-radius: 6px;
-                            font-weight: bold;
-                            margin: 5px;
-                        }
-                        QPushButton:hover {
-                            background-color: #f57c00;
-                        }
-                    """)
-                    self.status_label.setText("Added to help list")
-                else:
-                    QMessageBox.information(self, "Note Required", "Please enter a help note.")
-        
+        existing_note = self.help_data.get('help', {}).get(self.current_question, "")
+         
         # Save help data
         self.save_help_data()
     
@@ -1410,7 +1556,14 @@ class HomeworkPractice(QMainWindow):
             # Set current session
             self.current_session_id = session_id
             self.current_session_label.setText(f"Current Session: {session_id}")
-            
+
+            # Save as last used session
+            try:
+                with open(self.last_session_file, 'w') as f:
+                    json.dump({'last_session_id': session_id}, f)
+            except Exception as save_error:
+                print(f"Could not save last session: {save_error}")
+                     
             # Reset session state
             self.current_question_index = 0
             self.current_question = None
@@ -1467,7 +1620,7 @@ class HomeworkPractice(QMainWindow):
                 }
             """)
         
-        self.setup_practice_session()
+        self.setup_practice_session(preserve_session=True)
         filter_type = "completed questions hidden" if self.filter_completed else "all questions shown"
         self.status_label.setText(f"Filter updated: {filter_type}")
     
@@ -1673,6 +1826,119 @@ class HomeworkPractice(QMainWindow):
                         return int(page_num) + 1
         
         return None
+    
+    def show_goto_dialog(self):
+        """Show dialog to jump to a specific question number"""
+        if not self.current_questions:
+            QMessageBox.information(self, "No Session", "Please start a practice session first.")
+            return
+        
+        from PyQt6.QtWidgets import QInputDialog
+        question_num, ok = QInputDialog.getInt(
+            self,
+            "Go to Question",
+            f"Enter question number (1-{len(self.current_questions)}):",
+            self.current_question_index + 1,
+            1,
+            len(self.current_questions),
+            1
+        )
+        
+        if ok:
+            self.current_question_index = question_num - 1
+            self.update_question_counter()
+            self.load_current_question()
+            self.show_answer_btn.setText("Show Answer")
+            self.showing_answer = False
+            self.showing_stem = False
+            self.status_label.setText(f"Jumped to question #{question_num}")
+    
+    def show_combine_sessions_dialog(self):
+        """Show dialog to combine multiple sessions"""
+        sessions = self.sessions_data.get('sessions', {})
+        
+        if len(sessions) < 2:
+            QMessageBox.information(
+                self,
+                "Not Enough Sessions",
+                "You need at least 2 saved sessions to combine."
+            )
+            return
+        
+        dialog = CombineSessionsDialog(sessions, self)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_sessions = dialog.get_selected_sessions()
+            
+            if len(selected_sessions) < 2:
+                QMessageBox.warning(
+                    self,
+                    "Selection Required",
+                    "Please select at least 2 sessions to combine."
+                )
+                return
+            
+            # Combine the sessions - keep ALL questions including duplicates
+            combined_questions = []
+            for session_id in selected_sessions:
+                session_data = sessions.get(session_id, {})
+                questions = session_data.get('question_order', [])
+                combined_questions.extend(questions)
+            
+            # Apply filter if needed
+            if self.filter_completed:
+                completed_list = self.completed_data.get('completed', [])
+                combined_questions = [q for q in combined_questions if q not in completed_list]
+            
+            # Shuffle if in random mode, otherwise keep structured order
+            if self.random_order:
+                random.shuffle(combined_questions)
+            
+            # Create new combined session
+            import time
+            new_session_id = f"combined_{int(time.time())}_{random.randint(1000, 9999)}"
+            
+            # Save new combined session
+            if 'sessions' not in self.sessions_data:
+                self.sessions_data['sessions'] = {}
+            
+            self.sessions_data['sessions'][new_session_id] = {
+                'question_order': combined_questions.copy(),
+                'created': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'total_questions': len(combined_questions),
+                'filter_completed': self.filter_completed,
+                'combined_from': selected_sessions
+            }
+            
+            self.save_sessions_data()
+            
+            # Load the new combined session
+            self.current_questions = combined_questions
+            self.original_session_order = combined_questions.copy()
+            self.current_session_id = new_session_id
+            self.current_session_label.setText(f"Current Session: {new_session_id}")
+            
+            # Save as last used session
+            try:
+                with open(self.last_session_file, 'w') as f:
+                    json.dump({'last_session_id': new_session_id}, f)
+            except Exception as save_error:
+                print(f"Could not save last session: {save_error}")
+            
+            # Update autocomplete
+            self.update_session_completer()
+            
+            # Reset session state
+            self.current_question_index = 0
+            self.current_question = None
+            self.showing_answer = False
+            
+            # Update UI
+            self.update_question_counter()
+            self.load_current_question()
+            
+            order_type = "shuffled" if self.random_order else "structured"
+            self.status_label.setText(f"Combined {len(selected_sessions)} sessions into {len(combined_questions)} questions ({order_type})")
 
 class HelpReviewDialog(QDialog):
     """Dialog for reviewing help-marked questions"""
