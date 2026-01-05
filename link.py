@@ -185,6 +185,10 @@ class PDFPage(QGraphicsView):
         self.start_point = None
         self.temp_rect = None
         
+        # NEW: Lazy loading state
+        self.is_rendered = False
+        self.page_document = page  # Store page reference
+        
         # Selection and resize state
         self.selected_rect = None
         self.resize_mode = None
@@ -213,9 +217,45 @@ class PDFPage(QGraphicsView):
         """Emit signal that annotations were modified"""
         self.annotation_modified.emit()
 
-    def render_page(self):
+    def render_placeholder(self):
+        """Render a lightweight placeholder for unloaded pages"""
+        # Get page dimensions without rendering (very fast)
+        rect = self.page_document.rect
+        width = int(rect.width)
+        height = int(rect.height)
+        
+        self.page_width = width
+        self.page_height = height
+        
+        # Create gray placeholder
+        placeholder = QPixmap(width, height)
+        placeholder.fill(QColor(240, 240, 240))
+        
+        # Draw page number
+        painter = QPainter(placeholder)
+        painter.setPen(QColor(150, 150, 150))
+        font = QFont()
+        font.setPointSize(max(12, height // 50))
+        painter.setFont(font)
+        painter.drawText(placeholder.rect(), Qt.AlignmentFlag.AlignCenter, 
+                        f"Page {self.index + 1}")
+        painter.end()
+        
+        self.scene.clear()
+        self.pixmap_item = self.scene.addPixmap(placeholder)
+        self.scene.setSceneRect(QRectF(placeholder.rect()))
+        self.setMinimumHeight(height + 20)
+        self.is_rendered = False
+        
+        # Don't clear annotations - they persist across render states
+    
+    def render_full(self):
+        """Render the actual PDF page content"""
+        if self.is_rendered:
+            return  # Already rendered
+            
         mat = fitz.Matrix(1, 1).prerotate(self.rotation)
-        pix = self.page.get_pixmap(matrix=mat, alpha=False)
+        pix = self.page_document.get_pixmap(matrix=mat, alpha=False)
         img_data = pix.tobytes("ppm")
         qimg = QImage.fromData(img_data)
         qpixmap = QPixmap.fromImage(qimg)
@@ -223,12 +263,29 @@ class PDFPage(QGraphicsView):
         self.page_width = qpixmap.width()
         self.page_height = qpixmap.height()
 
+        # Store current annotations before clearing
+        temp_annotations = self.annotations.copy()
+        temp_selected = self.selected_rect
+        
         self.scene.clear()
         self.pixmap_item = self.scene.addPixmap(qpixmap)
         self.scene.setSceneRect(QRectF(qpixmap.rect()))
         self.setMinimumHeight(qpixmap.height() + 20)
+        
+        # Restore annotations
         self.annotations = []
-        self.selected_rect = None
+        for ann in temp_annotations:
+            self.scene.addItem(ann)
+            self.annotations.append(ann)
+        
+        if temp_selected and temp_selected in temp_annotations:
+            self.selected_rect = temp_selected
+        
+        self.is_rendered = True
+    
+    def render_page(self):
+        """For backward compatibility - renders as placeholder initially"""
+        self.render_placeholder()
 
     def load_annotations(self, annotation_data):
         """Load annotations from relative coordinates"""
@@ -828,6 +885,10 @@ class PDFViewer(QWidget):
         self.rotate_all = False
         self.page_widgets = []
         self.current_page_index = 0
+        
+        # NEW: Lazy loading configuration
+        self.lazy_load_window = 10  # Pages to keep loaded before/after viewport
+        self.last_loaded_range = (0, 0)  # Track what's currently loaded
 
         self.init_ui()
 
@@ -1047,8 +1108,8 @@ class PDFViewer(QWidget):
             page = self.pdf_document[page_num]
             pdf_page = PDFPage(page, page_num, owner=self, annotation_color=self.annotation_color)
             pdf_page.rotation = self.global_rotation if self.rotate_all else 0
-            pdf_page.render_page()
-            self.connect_page_signals(pdf_page)  # Connect annotation change signals
+            pdf_page.render_placeholder()  # Start with placeholder
+            self.connect_page_signals(pdf_page)
             self.scroll_layout.addWidget(pdf_page)
             self.page_widgets.append(pdf_page)
 
@@ -1058,8 +1119,61 @@ class PDFViewer(QWidget):
         for page_widget in self.page_widgets:
             page_widget.ensure_selection_ids()
         
+        # NEW: Load initial viewport pages after layout completes
+        QTimer.singleShot(100, self.load_visible_pages)
+                
         # Visual states will be updated by the parent app when needed
 
+    def load_visible_pages(self):
+        """Load pages that should be visible based on scroll position"""
+        if not self.page_widgets:
+            return
+        
+        # Calculate which pages are in viewport
+        scroll_area = self.scroll_area
+        viewport_top = scroll_area.verticalScrollBar().value()
+        viewport_bottom = viewport_top + scroll_area.viewport().height()
+        
+        # Find pages in viewport
+        first_visible = None
+        last_visible = None
+        
+        for i, page_widget in enumerate(self.page_widgets):
+            page_top = page_widget.y()
+            page_bottom = page_top + page_widget.height()
+            
+            # Check if page intersects viewport
+            if page_bottom >= viewport_top and page_top <= viewport_bottom:
+                if first_visible is None:
+                    first_visible = i
+                last_visible = i
+        
+        if first_visible is None:
+            first_visible = 0
+            last_visible = 0
+        
+        # Calculate loading window
+        load_start = max(0, first_visible - self.lazy_load_window)
+        load_end = min(len(self.page_widgets) - 1, last_visible + self.lazy_load_window)
+        
+        # Unload pages outside the window (only if we had a previous range)
+        if self.last_loaded_range != (0, 0):  # <-- ADD THIS CHECK
+            for i in range(self.last_loaded_range[0], load_start):
+                if i < len(self.page_widgets) and self.page_widgets[i].is_rendered:
+                    self.page_widgets[i].render_placeholder()
+            
+            for i in range(load_end + 1, self.last_loaded_range[1] + 1):
+                if i < len(self.page_widgets) and self.page_widgets[i].is_rendered:
+                    self.page_widgets[i].render_placeholder()
+        
+        # Load pages in the window
+        for i in range(load_start, load_end + 1):
+            if i < len(self.page_widgets) and not self.page_widgets[i].is_rendered:
+                self.page_widgets[i].render_full()
+        
+        # Update tracking
+        self.last_loaded_range = (load_start, load_end)
+        
     def update_page_counter_label(self):
         total = len(self.page_widgets)
         if total == 0:
@@ -1094,7 +1208,10 @@ class PDFViewer(QWidget):
                 closest_dist = dist
                 closest_idx = i
         self.set_current_page(closest_idx)
-
+        
+        # NEW: Trigger lazy loading
+        self.load_visible_pages()
+        
     def rotate_pages(self, angle: int):
         if self.rotate_all:
             self.global_rotation = (self.global_rotation + angle) % 360
@@ -2680,7 +2797,9 @@ class DualPDFViewerApp(QMainWindow):
         if target_page < len(viewer.page_widgets):
             # Get the target page widget
             page_widget = viewer.page_widgets[target_page]
-            
+            if not page_widget.is_rendered:
+                page_widget.render_full()
+                            
             # Calculate the position to center the page in the viewport
             scroll_area = viewer.scroll_area
             viewport_height = scroll_area.viewport().height()
