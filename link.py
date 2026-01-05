@@ -250,38 +250,45 @@ class PDFPage(QGraphicsView):
         # Don't clear annotations - they persist across render states
     
     def render_full(self):
-        """Render the actual PDF page content"""
-        if self.is_rendered:
-            return  # Already rendered
+            """Render the actual PDF page content"""
+            if self.is_rendered:
+                return  # Already rendered
+                
+            mat = fitz.Matrix(1, 1).prerotate(self.rotation)
+            pix = self.page_document.get_pixmap(matrix=mat, alpha=False)
+            img_data = pix.tobytes("ppm")
+            qimg = QImage.fromData(img_data)
+            qpixmap = QPixmap.fromImage(qimg)
+    
+            self.page_width = qpixmap.width()
+            self.page_height = qpixmap.height()
+    
+            # Save annotation data before clearing (scene.clear() deletes Qt objects)
+            annotations_data = self.get_annotations_data()
+            was_selected_id = None
+            if self.selected_rect and hasattr(self.selected_rect, 'selection_id'):
+                was_selected_id = self.selected_rect.selection_id
             
-        mat = fitz.Matrix(1, 1).prerotate(self.rotation)
-        pix = self.page_document.get_pixmap(matrix=mat, alpha=False)
-        img_data = pix.tobytes("ppm")
-        qimg = QImage.fromData(img_data)
-        qpixmap = QPixmap.fromImage(qimg)
-
-        self.page_width = qpixmap.width()
-        self.page_height = qpixmap.height()
-
-        # Store current annotations before clearing
-        temp_annotations = self.annotations.copy()
-        temp_selected = self.selected_rect
-        
-        self.scene.clear()
-        self.pixmap_item = self.scene.addPixmap(qpixmap)
-        self.scene.setSceneRect(QRectF(qpixmap.rect()))
-        self.setMinimumHeight(qpixmap.height() + 20)
-        
-        # Restore annotations
-        self.annotations = []
-        for ann in temp_annotations:
-            self.scene.addItem(ann)
-            self.annotations.append(ann)
-        
-        if temp_selected and temp_selected in temp_annotations:
-            self.selected_rect = temp_selected
-        
-        self.is_rendered = True
+            self.scene.clear()
+            self.pixmap_item = self.scene.addPixmap(qpixmap)
+            self.scene.setSceneRect(QRectF(qpixmap.rect()))
+            self.setMinimumHeight(qpixmap.height() + 20)
+            
+            # Recreate annotations from saved data
+            self.annotations = []
+            self.selected_rect = None
+            if annotations_data:
+                self.load_annotations(annotations_data)
+                
+                # Restore selection if there was one
+                if was_selected_id:
+                    for ann in self.annotations:
+                        if hasattr(ann, 'selection_id') and ann.selection_id == was_selected_id:
+                            self.selected_rect = ann
+                            ann.select()
+                            break
+            
+            self.is_rendered = True
     
     def render_page(self):
         """For backward compatibility - renders as placeholder initially"""
