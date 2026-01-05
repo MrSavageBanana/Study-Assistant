@@ -2825,12 +2825,14 @@ class DualPDFViewerApp(QMainWindow):
             # Scroll to the calculated position
             scroll_area.verticalScrollBar().setValue(int(target_scroll_y))
             
-            # Highlight the annotation
-            annotation_item = annotation_info['annotation']
-            if annotation_item:
-                # Select and highlight the annotation
-                page_widget.selected_rect = annotation_item
-                annotation_item.select()
+            # Find and highlight the annotation by selection_id
+            target_selection_id = annotation_info['selection_id']
+            if target_selection_id:
+                for annotation in page_widget.annotations:
+                    if hasattr(annotation, 'selection_id') and annotation.selection_id == target_selection_id:
+                        # Select and highlight the annotation
+                        page_widget.selected_rect = annotation
+                        annotation.select()
                 
                 # Update the page widget
                 page_widget.viewport().update()
@@ -2865,6 +2867,7 @@ class DualPDFViewerApp(QMainWindow):
                     self.all_annotations[1].append({
                         'page_index': page_index,
                         'annotation': annotation,
+                        'annotation': annotation,
                         'y_position': y_pos,
                         'selection_id': getattr(annotation, 'selection_id', None),
                         'page': getattr(annotation, 'page_index', page_index) + 1  # Convert to 1-based page number
@@ -2881,6 +2884,7 @@ class DualPDFViewerApp(QMainWindow):
                     
                     self.all_annotations[2].append({
                         'page_index': page_index,
+                        'annotation': annotation,
                         'annotation': annotation,
                         'y_position': y_pos,
                         'selection_id': getattr(annotation, 'selection_id', None),
